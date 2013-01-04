@@ -88,7 +88,7 @@ abstract class Source extends java.io.Serializable {
     sys.error("Cascading Hadoop mode not supported for: " + toString)
   }
 
-  def read(implicit flowDef : FlowDef, mode : Mode) = {
+  def read(implicit flowDef : FlowDef, mode : Mode, tracing : Tracing) = {
     //insane workaround for scala compiler bug
     val sources = flowDef.getSources().asInstanceOf[JMap[String,Any]]
     val srcName = this.toString
@@ -186,16 +186,16 @@ trait Mappable[T] extends Source {
   // Due to type erasure, your subclass must supply this
   val converter : TupleConverter[T]
   def mapTo[U](out : Fields)(mf : (T) => U)
-    (implicit flowDef : FlowDef, mode : Mode, setter : TupleSetter[U]) = {
-    RichPipe(read(flowDef, mode)).mapTo[T,U](sourceFields -> out)(mf)(converter, setter)
+    (implicit flowDef : FlowDef, mode : Mode, setter : TupleSetter[U], tracing : Tracing) = {
+    RichPipe(read(flowDef, mode, tracing)).mapTo[T,U](sourceFields -> out)(mf)(converter, setter, tracing)
   }
   /**
   * If you want to filter, you should use this and output a 0 or 1 length Iterable.
   * Filter does not change column names, and we generally expect to change columns here
   */
   def flatMapTo[U](out : Fields)(mf : (T) => Iterable[U])
-    (implicit flowDef : FlowDef, mode : Mode, setter : TupleSetter[U]) = {
-    RichPipe(read(flowDef, mode)).flatMapTo[T,U](sourceFields -> out)(mf)(converter, setter)
+    (implicit flowDef : FlowDef, mode : Mode, setter : TupleSetter[U], tracing : Tracing) = {
+    RichPipe(read(flowDef, mode, tracing)).flatMapTo[T,U](sourceFields -> out)(mf)(converter, setter, tracing)
   }
 }
 

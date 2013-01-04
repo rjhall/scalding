@@ -26,7 +26,7 @@ libraryDependencies += "cascading" % "cascading-local" % "2.0.2"
 
 libraryDependencies += "cascading" % "cascading-hadoop" % "2.0.2"
 
-libraryDependencies += "cascading.kryo" % "cascading.kryo" % "0.4.5"
+libraryDependencies += "cascading.kryo" % "cascading.kryo" % "0.4.6"
 
 libraryDependencies += "com.twitter" % "maple" % "0.2.4"
 
