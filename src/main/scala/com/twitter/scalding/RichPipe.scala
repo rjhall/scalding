@@ -161,7 +161,7 @@ class RichPipe(val pipe : Pipe) extends java.io.Serializable with JoinAlgorithms
    * }}}
    */
   def groupBy(f : Fields)(builder : GroupBuilder => GroupBuilder)(implicit tracing : Tracing) : Pipe = {
-    tracing.onGroupBy(builder(new GroupBuilder(f))).schedule(pipe.getName, pipe)
+    tracing.onGroupBy(builder(new GroupBuilder(f)), pipe).schedule(pipe.getName, pipe)
   }
 
   /**

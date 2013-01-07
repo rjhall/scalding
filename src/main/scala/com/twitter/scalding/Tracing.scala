@@ -31,7 +31,7 @@ abstract class Tracing {
   def afterJoin(pipe : Pipe) : Pipe
 
   // Called by RichPipe.groupBy
-  def onGroupBy(groupbuilder : GroupBuilder) : GroupBuilder
+  def onGroupBy(groupbuilder : GroupBuilder, pipe : Pipe) : GroupBuilder
 
   // Called by SourceTracingJob.buildFlow
   def onFlowComplete(implicit flowDef : FlowDef, mode : Mode) : Unit
@@ -47,7 +47,7 @@ class NullTracing extends Tracing {
   override def onWrite(pipe : Pipe) : Pipe = pipe
   override def beforeJoin(pipe : Pipe, side : Boolean) : Pipe = pipe
   override def afterJoin(pipe : Pipe) : Pipe = pipe
-  override def onGroupBy(groupbuilder : GroupBuilder) : GroupBuilder = groupbuilder
+  override def onGroupBy(groupbuilder : GroupBuilder, pipe : Pipe) : GroupBuilder = groupbuilder
   override def onFlowComplete(implicit flowDef : FlowDef, mode : Mode) : Unit = {}
   override def tracingFields : Option[Fields] = None
 }
@@ -64,15 +64,17 @@ class InputTracing(val fieldName : String) extends Tracing {
 
   protected var sources = Set[TracingFileSource]()
   protected var tailpipes = Map[String, Pipe]()
+  protected var headpipes = Set[Pipe]()
   
-  def register(src : TracingFileSource) : Unit = {
-    sources += src
+  def isTracing(pipe : Pipe) : Boolean = {
+    headpipes.contains(pipe) || (pipe.getHeads.size > 0 && pipe.getHeads.toList.map{ p : Pipe => headpipes.contains(p) }.reduce{_||_})
   }
 
   override def afterRead(src : Source, pipe : Pipe) : Pipe = {
     src match {
       case tf : TracingFileSource => {
-        register(tf)
+        sources += tf
+        headpipes += pipe
         val fp = tf.toString
         pipe.map(tf.hdfsScheme.getSourceFields -> field){ te : TupleEntry => Map(fp -> List[Tuple](te.getTuple)) }
       }
@@ -83,34 +85,70 @@ class InputTracing(val fieldName : String) extends Tracing {
   }
 
   override def onWrite(pipe : Pipe) : Pipe = {
-    // Nuke the implicit tracing object to turn off tracing for this step.
-    Tracing.tracing = new NullTracing()
-    sources.foreach { ts : TracingFileSource =>
-      val n = ts.toString
-      val p = pipe.flatMapTo(fieldName -> ts.hdfsScheme.getSourceFields){ m : Map[String, List[Tuple]] => m.getOrElse(n, List[Tuple]()) }
-      if(tailpipes.contains(n))
-        tailpipes += (n -> (RichPipe(p) ++ tailpipes(n)))
-      else
-        tailpipes += (n -> p)
+    if(isTracing(pipe)) {
+      // Nuke the implicit tracing object to turn off tracing for this step.
+      Tracing.tracing = new NullTracing()
+      sources.foreach { ts : TracingFileSource =>
+        val n = ts.toString
+        val p = pipe.flatMapTo(fieldName -> ts.hdfsScheme.getSourceFields){ m : Map[String, List[Tuple]] => m.getOrElse(n, List[Tuple]()) }
+        if(tailpipes.contains(n))
+          tailpipes += (n -> (RichPipe(p) ++ tailpipes(n)))
+        else
+          tailpipes += (n -> p)
+      }
+      // Resume tracing
+      Tracing.tracing = this
     }
-    // Resume tracing
-    Tracing.tracing = this
     pipe
   }
 
-  override def beforeJoin(pipe : Pipe, side : Boolean) : Pipe = {
-    if(side)
-      pipe.rename(field -> new Fields(fieldName+"_"))
-    else
+
+  protected var lefttracing : Option[Boolean] = None
+  protected var righttracing : Option[Boolean] = None
+  
+  // Currently theres no way for these calls to get interleaved so it is safe to assume that
+  // two calls to beforejoin always preceed a call to afterjoin.
+  override def beforeJoin(pipe : Pipe, right : Boolean) : Pipe = {
+    if(right) {
+      require(righttracing == None)
+      righttracing = Some(isTracing(pipe))
+      if(righttracing.get)
+        pipe.rename(field -> new Fields(fieldName+"_"))
+      else
+        pipe
+    } else {
+      require(lefttracing == None)
+      lefttracing = Some(isTracing(pipe))
       pipe
+    }
   }
 
   override def afterJoin(pipe : Pipe) : Pipe = {
-    pipe.map((fieldName, fieldName+"_") -> fieldName){ m : (Map[String,List[Tuple]], Map[String,List[Tuple]]) => m._1 + m._2}
+    require(lefttracing != None && righttracing != None)
+    val ret = 
+      if(lefttracing.get) {
+        if(righttracing.get) {
+          pipe.map((fieldName, fieldName+"_") -> fieldName){ m : (Map[String,List[Tuple]], Map[String,List[Tuple]]) => m._1 + m._2}
+        } else {
+          pipe
+        }
+      } else {
+        if(righttracing.get) {
+          pipe.rename(new Fields(fieldName+"_") -> field)
+        } else {
+          pipe
+        }
+      }
+    righttracing = None
+    lefttracing = None
+    ret
   }
 
-  override def onGroupBy(groupbuilder : GroupBuilder) : GroupBuilder = {
-    groupbuilder.plus[Map[String,List[Tuple]]](field -> field)
+  override def onGroupBy(groupbuilder : GroupBuilder, pipe : Pipe) : GroupBuilder = {
+    if(isTracing(pipe))
+      groupbuilder.plus[Map[String,List[Tuple]]](field -> field)
+    else
+      groupbuilder
   }
 
   override def onFlowComplete(implicit flowDef : FlowDef, mode : Mode) : Unit = {
