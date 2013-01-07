@@ -22,9 +22,11 @@ class InputTracingJob(args : Args) extends Job(args) {
 
   implicit def p2ssp(pipe : Pipe) : SubsamplingPipe = new SubsamplingPipe(pipe)
   implicit def ssp2p(ssp : SubsamplingPipe) : Pipe = ssp.pipe
+  // In case the first operation is subsampling.
+  implicit def s2ssp(src : Source) : SubsamplingPipe = new SubsamplingPipe(src.read)
 
   // Convenience method to constructed a traced source.
-  def TracingFileSource(o : FileSource, s : FileSource) : TracingFileSource = {
+  def TracingFileSource(o : FileSource, s : String) : TracingFileSource = {
     new TracingFileSource(o, s, args)
   }
   

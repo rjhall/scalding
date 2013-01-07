@@ -10,9 +10,11 @@ import org.apache.hadoop.mapred.JobConf
 import org.apache.hadoop.mapred.OutputCollector;
 import org.apache.hadoop.mapred.RecordReader;
 
-class TracingFileSource(val original : FileSource, val subset : FileSource, args : Args) extends FileSource {
+class TracingFileSource(val original : FileSource, subsetfp : String, args : Args) extends FileSource {
 
   val use_sources = args.boolean("use_sources")
+
+  val subset = new SequenceFile(subsetfp)
 
   // To allow for use in a map, as in the testing code.
   override def equals(a : Any) = {
