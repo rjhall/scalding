@@ -128,7 +128,7 @@ class RichPipe(val pipe : Pipe) extends java.io.Serializable with JoinAlgorithms
   def project(fields : Fields)(implicit tracing : Tracing) = {
       tracing.tracingFields match {
           case Some(tracingFields) => {  
-              val f = if(fields.contains(tracingFields)) fields else fields.append(tracingFields)
+              val f = if(tracing.isTraced(pipe) && !fields.contains(tracingFields)) fields.append(tracingFields) else fields
               new Each(pipe, f, new Identity(f))
           }
           case None => {
@@ -405,7 +405,12 @@ class RichPipe(val pipe : Pipe) extends java.io.Serializable with JoinAlgorithms
 
   def write(outsource : Source)(implicit flowDef : FlowDef, mode : Mode, tracing : Tracing) = {
     tracing.tracingFields match {
-      case Some(fields) => outsource.writeFrom(discard(fields))(flowDef, mode)
+      case Some(fields) => {
+        if(tracing.isTraced(pipe))
+          outsource.writeFrom(discard(fields))(flowDef, mode)
+        else
+          outsource.writeFrom(pipe)(flowDef, mode)
+      }
       case None => outsource.writeFrom(pipe)(flowDef, mode)
     }
     tracing.onWrite(pipe)

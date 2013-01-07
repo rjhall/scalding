@@ -39,6 +39,9 @@ abstract class Tracing {
   // The fields which get tracked (so that RichPipe doesnt nuke these fields
   // in  e.g., mapTo and project)
   def tracingFields : Option[Fields]
+
+  // Let Richpipe know whether a pipe needs fields to be preserved.
+  def isTraced(pipe : Pipe) : Boolean
 }
 
 // This class does no tracing.
@@ -50,6 +53,7 @@ class NullTracing extends Tracing {
   override def onGroupBy(groupbuilder : GroupBuilder, pipe : Pipe) : GroupBuilder = groupbuilder
   override def onFlowComplete(implicit flowDef : FlowDef, mode : Mode) : Unit = {}
   override def tracingFields : Option[Fields] = None
+  override def isTraced(pipe : Pipe) = false
 }
 
 // This class traces input records throughout the computation by placing
@@ -66,7 +70,7 @@ class InputTracing(val fieldName : String) extends Tracing {
   protected var tailpipes = Map[String, Pipe]()
   protected var headpipes = Set[Pipe]()
   
-  def isTracing(pipe : Pipe) : Boolean = {
+  def isTraced(pipe : Pipe) : Boolean = {
     headpipes.contains(pipe) || (pipe.getHeads.size > 0 && pipe.getHeads.toList.map{ p : Pipe => headpipes.contains(p) }.reduce{_||_})
   }
 
@@ -85,7 +89,7 @@ class InputTracing(val fieldName : String) extends Tracing {
   }
 
   override def onWrite(pipe : Pipe) : Pipe = {
-    if(isTracing(pipe)) {
+    if(isTraced(pipe)) {
       // Nuke the implicit tracing object to turn off tracing for this step.
       Tracing.tracing = new NullTracing()
       sources.foreach { ts : TracingFileSource =>
@@ -111,14 +115,14 @@ class InputTracing(val fieldName : String) extends Tracing {
   override def beforeJoin(pipe : Pipe, right : Boolean) : Pipe = {
     if(right) {
       require(righttracing == None)
-      righttracing = Some(isTracing(pipe))
+      righttracing = Some(isTraced(pipe))
       if(righttracing.get)
         pipe.rename(field -> new Fields(fieldName+"_"))
       else
         pipe
     } else {
       require(lefttracing == None)
-      lefttracing = Some(isTracing(pipe))
+      lefttracing = Some(isTraced(pipe))
       pipe
     }
   }
@@ -145,7 +149,7 @@ class InputTracing(val fieldName : String) extends Tracing {
   }
 
   override def onGroupBy(groupbuilder : GroupBuilder, pipe : Pipe) : GroupBuilder = {
-    if(isTracing(pipe))
+    if(isTraced(pipe))
       groupbuilder.plus[Map[String,List[Tuple]]](field -> field)
     else
       groupbuilder
