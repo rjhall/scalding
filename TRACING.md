@@ -1,7 +1,7 @@
 Input Tracing
 =====
 
-We implement a form of tracing such that at all times we know which input rows which gave rise to each row in the pipe.
+We implement a form of tracing such that at all times we know which input rows gave rise to each row in the pipe.
 This is achived by appending a field to the pipe (after its first read from a source) which contains a representation of
 the entire source row.  Subsequent flow steps (such as joins, groupBy etc) maintain this field, then when the pipe is written,
 this field is used to reconstruct the subsets of the input data which gave rise to the output data.  These subsets are then
