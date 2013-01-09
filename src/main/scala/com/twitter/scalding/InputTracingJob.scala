@@ -33,7 +33,7 @@ class InputTracingJob(args : Args) extends Job(args) {
   // Finish the flow by calling onFlowcomplete.
   override def buildFlow(implicit mode : Mode) = {
     validateSources(mode)
-    Tracing.tracing.onFlowComplete(flowDef, mode)
+    Tracing.tracing.onFlowComplete.foreach{ x : (Source, Pipe) => x._1.writeFrom(x._2)(flowDef, mode) }
     // Sources are good, now connect the flow:
     mode.newFlowConnector(config).connect(flowDef)
   }

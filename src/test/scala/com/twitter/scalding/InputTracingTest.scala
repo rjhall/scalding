@@ -39,6 +39,31 @@ class InputTracingMapTest extends Specification with TupleConversions {
         .finish
     }
   }
+  "Running with --write_sources -bf" should {
+    //Set up the job:
+    "correctly track sources" in {
+      JobTest("com.twitter.scalding.InputTracingMapJob")
+        .arg("write_sources", "true")
+        .arg("bf", "true")
+        .source(new TracingFileSource(Tsv("input", ('x,'y)), "subsample", Args("asdf")), List(("0","1"), ("1","3"), ("2","9")))
+        .sink[(Int)](Tsv("output")) { outBuf =>
+          val unordered = outBuf.toSet
+          unordered.size must be_==(3)
+          unordered((1)) must be_==(true)
+          unordered((4)) must be_==(true)
+          unordered((11)) must be_==(true)
+        }
+        .sink[(Int,Int)](SequenceFile("subsample")) { outBuf => 
+          val unordered = outBuf.toSet
+          unordered.size must be_>=(3)
+          unordered((0,1)) must be_==(true)
+          unordered((1,3)) must be_==(true)
+          unordered((2,9)) must be_==(true)
+        }
+        .runHadoop
+        .finish
+    }
+  }
 }
 
 class UseInputTracingTest extends Specification with TupleConversions {
@@ -100,6 +125,35 @@ class InputTracingJoinTest extends Specification with TupleConversions {
         .runHadoop
         .finish
     }
+    "correctly track sources with --bf" in {
+      JobTest("com.twitter.scalding.InputTracingJoinJob")
+        .arg("bf", "true")
+        .arg("write_sources", "true")
+        .source(new TracingFileSource(Tsv("input", ('x,'y)), "sample/input", Args("asdf")), List(("0","1"), ("1","3"), ("2","9"), ("10", "0")))
+        .source(new TracingFileSource(Tsv("input2", ('x, 'z)), "sample/input2", Args("asdf")), List(("5","1"), ("1","4"), ("2","7")))
+        .sink[(Int,Int,Int)](Tsv("output")) { outBuf =>
+          val unordered = outBuf.toSet
+          unordered.size must be_==(2)
+          unordered((1,3,4)) must be_==(true)
+          unordered((2,9,7)) must be_==(true)
+        }
+        .sink[(Int,Int)](SequenceFile("sample/input")) { outBuf => 
+          val unordered = outBuf.toSet
+          println("bf output " + unordered.size + " with 2 needed")
+          unordered.size must be_>=(2)
+          unordered((1,3)) must be_==(true)
+          unordered((2,9)) must be_==(true)
+        }
+        .sink[(Int,Int)](SequenceFile("sample/input2")) { outBuf => 
+          val unordered = outBuf.toSet
+          println("bf output " + unordered.size + " with 2 needed")
+          unordered.size must be_>=(2)
+          unordered((1,4)) must be_==(true)
+          unordered((2,7)) must be_==(true)
+        }
+        .runHadoop
+        .finish
+    }
   }
 }
 
@@ -128,6 +182,29 @@ class InputTracingGroupByTest extends Specification with TupleConversions {
         .sink[(Int,Int)](SequenceFile("foo/input")) { outBuf => 
           val unordered = outBuf.toSet
           unordered.size must be_==(4)
+          unordered((0,1)) must be_==(true)
+          unordered((0,3)) must be_==(true)
+          unordered((1,1)) must be_==(true)
+          unordered((1,9)) must be_==(true)
+        }
+        .runHadoop
+        .finish
+    }
+    "correctly track sources with --bf" in {
+      JobTest("com.twitter.scalding.InputTracingGroupByJob")
+        .arg("write_sources", "true")
+        .arg("bf", "true")
+        .source(new TracingFileSource(Tsv("input", ('x,'y)), "foo/input", Args("asdf")), List(("0","1"), ("0","3"), ("1","9"), ("1", "1"), ("2", "5"), ("2", "3"), ("3", "3")))
+        .sink[(Int,Int)](Tsv("output")) { outBuf =>
+          val unordered = outBuf.toSet
+          unordered.size must be_==(2)
+          unordered((0,4)) must be_==(true)
+          unordered((1,10)) must be_==(true)
+        }
+        .sink[(Int,Int)](SequenceFile("foo/input")) { outBuf => 
+          val unordered = outBuf.toSet
+          println("bf output " + unordered.size + " with 4 needed")
+          unordered.size must be_>=(4)
           unordered((0,1)) must be_==(true)
           unordered((0,3)) must be_==(true)
           unordered((1,1)) must be_==(true)
