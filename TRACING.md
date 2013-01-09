@@ -29,6 +29,20 @@ The intent of this job is to construct subsamples of `"example_input1"` and `"ex
 of the former will join to the elements of the latter.  An alternative means of constructing these subsets 
 (independently subsampling both sources) may fail, since the result of the join may be empty.
 
+Commandline Flags
+-----
+
+In order to use the input tracing behavior there are two commandline flags which can be used.  The first is 
+`--write_sources` which causes the subsets of the inputs to actually get written (by default they are not and the job
+just behaves as normal).  The second option is `--use_sources` which should be used after the traced inputs have been written.
+This causes the subsets to be read, in place of the original source.
+
+In order to handle jobs which involve many joins or groupBys, there is an option to trace the input tuples using 
+a bloom filter rather than by a list of raw tuples.  To invoke this use the commandline flag `--bf`, the width of the bloom
+filter in bits is controlled by `--bfwidth` and the number of hashes by `--bfhashes`, although the default values should be
+sufficient for most cases (524288 bits and 5 hashes).
+
+
 Explanation
 ------
 
@@ -38,11 +52,6 @@ be written (and subsequently read from).
 
 InputTracingJob simply provides the convenience methods for the wrapping of sources, and also sets up the flow to
 write the subsets on completion of the job.
-
-In order to use the input tracing behavior there are two commandline flags which can be used.  The first is 
-`--write_sources` which causes the subsets of the inputs to actually get written (by default they are not and the job
-just behaves as normal).  The second option is `--use_sources` which should be used after the traced inputs have been written.
-This causes the subsets to be read, in place of the original source.
 
 Finally the method `optionalSubsample` can be used from within an InputTracingJob.  What this method does depends on the 
 commandline flags.  In the case that no option is sprcified, or `--write_sources` is used, then this method keeps a fraction
