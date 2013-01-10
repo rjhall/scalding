@@ -4,6 +4,8 @@ import cascading.flow.FlowDef
 import cascading.pipe.Pipe
 import cascading.tuple.{Fields,Tuple,TupleEntry}
 
+import com.googlecode.javaewah.{EWAHCompressedBitmap => CBitSet}
+
 import com.twitter.algebird.BFHash
 import com.twitter.algebird.Operators._
 
@@ -14,8 +16,8 @@ object Tracing {
     if(args.boolean("write_sources")) {
       if(args.boolean("bf")) {
         tracing = new BloomFilterInputTracing(
-          args.getOrElse("bf_hashes", 5.toString).toInt,
-          args.getOrElse("bf_width", (512*1024).toString).toInt,
+          args.getOrElse("bf_hashes", 7.toString).toInt,
+          args.getOrElse("bf_width", (1 << 30).toString).toInt,
           args.getOrElse("tracing_field", "__source_data__"))
       } else {
         tracing = new MapInputTracing(args.getOrElse("tracing_field", "__source_data__"))
@@ -201,7 +203,7 @@ class MapInputTracing(fieldName : String) extends BaseInputTracing[Map[String,Li
 // As Above but instead of using a Map of string -> List[Tuple], we do a map of
 // string -> BloomFilter, then when the flows complete we go back and scan the input for
 // those elements in the filter.
-class BloomFilterInputTracing(val bfhashes : Int, val bfwidth: Int, fieldName : String) extends BaseInputTracing[Map[String,BitSet]](fieldName) {
+class BloomFilterInputTracing(val bfhashes : Int, val bfwidth: Int, fieldName : String) extends BaseInputTracing[Map[String, CBitSet]](fieldName) {
 
   import Dsl._
 
@@ -215,10 +217,10 @@ class BloomFilterInputTracing(val bfhashes : Int, val bfwidth: Int, fieldName : 
   def prepare(tf : TracingFileSource, pipe : Pipe) : Pipe = {
     val fp = tf.toString
     origpipes += (fp -> pipe)
-    pipe.map(tf.hdfsScheme.getSourceFields -> field){ te : TupleEntry => Map[String, BitSet](fp -> hash(te.getTuple.toString)) }
+    pipe.map(tf.hdfsScheme.getSourceFields -> field){ te : TupleEntry => Map[String, CBitSet](fp -> hash(te.getTuple.toString)) }
   }
 
-  def hash(str : String) : BitSet = BitSet(bfhash(str) : _*)
+  def hash(str : String) : CBitSet = CBitSet.bitmapOf(bfhash(str) : _*)
 
   override def onWrite(pipe : Pipe) : Pipe = {
     if(isTraced(pipe)) {
@@ -226,10 +228,10 @@ class BloomFilterInputTracing(val bfhashes : Int, val bfwidth: Int, fieldName : 
       Tracing.tracing = new NullTracing()
       sources.foreach { ts : TracingFileSource =>
         val n = ts.toString
-        val p = pipe.mapTo(fieldName -> 'bf){ m : Map[String, BitSet] => m.getOrElse(n, BitSet()) }
-                    .groupAll{ _.reduce[BitSet]('bf -> 'bf){ (x : BitSet, y : BitSet) => x ++ y} } // TODO: unknown how bad this is.
+        val p = pipe.mapTo(fieldName -> 'bf){ m : Map[String, CBitSet] => m.getOrElse(n, CBitSet.bitmapOf()) }
+                    .groupAll{ _.reduce[CBitSet]('bf -> 'bf){ (x : CBitSet, y : CBitSet) => x.or(y)} } // TODO: unknown how bad this is.
         if(tailpipes.contains(n))
-          tailpipes += (n -> tailpipes(n).crossWithTiny(p.rename('bf->'bf2)).map(('bf, 'bf2) -> 'bf){ x : (BitSet, BitSet) => x._1 ++ x._2 })
+          tailpipes += (n -> tailpipes(n).crossWithTiny(p.rename('bf->'bf2)).map(('bf, 'bf2) -> 'bf){ x : (CBitSet, CBitSet) => x._1.or(x._2) })
         else
           tailpipes += (n -> p)
       }
@@ -249,7 +251,7 @@ class BloomFilterInputTracing(val bfhashes : Int, val bfwidth: Int, fieldName : 
         val p = origpipes(n)
                   .map(Fields.ALL -> 'tuplestr){ te : TupleEntry => te.getTuple.toString }
                   .crossWithTiny(tailpipes(n))
-                  .filter(('tuplestr,'bf)){ x : (String, BitSet) => val y = hash(x._1); (x._2 & y) == y }
+                  .filter(('tuplestr,'bf)){ x : (String, CBitSet) => val y = hash(x._1); x._2.and(y).equals(y) }
                   .discard('tuplestr, 'bf)
         ret += (ts.subset -> p)
       }
@@ -257,38 +259,9 @@ class BloomFilterInputTracing(val bfhashes : Int, val bfwidth: Int, fieldName : 
     ret
   }
 
-  override def merge(a : Map[String,BitSet], b : Map[String,BitSet]) : Map[String,BitSet] = {
-    var m : Map[String,BitSet] = a;
-    b.foreach{ x : (String,BitSet) => m += (x._1 -> (if(m.contains(x._1)) x._2 ++ m(x._1) else x._2)) }
+  override def merge(a : Map[String, CBitSet], b : Map[String, CBitSet]) : Map[String, CBitSet] = {
+    var m : Map[String, CBitSet] = a;
+    b.foreach{ x : (String, CBitSet) => m += (x._1 -> (if(m.contains(x._1)) x._2.or(m(x._1)) else x._2)) }
     m
-  }
-
-  // Rather than a separate object, I just made this method to build the BitSets
-  // since it needs to know the width field from this class.
-  def BitSet(locs : Int*) : BitSet = {
-    val bits = new Array[Long](bfwidth/64)
-    locs.foreach { loc : Int =>
-      bits(loc/64) |= (1L << (loc % 64))
-    }
-    new BitSet(bits)
-  }
-}
-
-// This is a cheesy BitSet implementation since Kryo treats the scala.collection.BitSet
-// in a funny way, so it gets deserialized into a HashSet[Int]. Writing a custom kryo serializer
-// for scala.collection.BitSet seems impossible in scala 2.9.1 since the underlying bits 
-// are not accessible.  In 2.10 they are though, through BitSet.toBitMask, so when 2.10 comes
-// this class can be removed, and a custom kryo serializer can be made instead.
-class BitSet(val bits : Array[Long]) extends Serializable {
-  def ==(rhs : BitSet) : Boolean = {
-    (bits.size == rhs.bits.size) && (bits, rhs.bits).zipped.map{_ == _}.reduce(_&&_)
-  }
-  def ++(rhs : BitSet) : BitSet = {
-    require(bits.size == rhs.bits.size)
-    new BitSet((bits, rhs.bits).zipped.map{_|_}.toArray)
-  }
-  def &(rhs : BitSet) : BitSet = {
-    require(bits.size == rhs.bits.size)
-    new BitSet((bits, rhs.bits).zipped.map{_&_}.toArray)
   }
 }

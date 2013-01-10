@@ -66,6 +66,37 @@ class InputTracingMapTest extends Specification with TupleConversions {
   }
 }
 
+class BloomFilterJob(args : Args) extends InputTracingJob(args) {
+  TracingFileSource(Tsv("input", ('x, 'y, 'z)), "subsample")
+    .filter('x){ x : Int => x == 1 }
+    .write(Tsv("output"))
+}
+
+class BloomFilterTest extends Specification with TupleConversions {
+  import Dsl._
+  "Running with --write_sources" should {
+    //Set up the job:
+    "correctly track sources" in {
+      var inp : Seq[(Int, Int, Int)] = for(i <- 0 until 10000) yield (i%10, (i / 10) % 100, i / 1000)
+      JobTest("com.twitter.scalding.BloomFilterJob")
+        .arg("write_sources", "true")
+        .arg("bf", "true")
+        .source(new TracingFileSource(Tsv("input", ('x, 'y, 'z)), "subsample", Args("asdf")), inp)
+        .sink[(Int,Int,Int)](Tsv("output")) { outBuf => 
+          val unordered = outBuf.toSet
+          println("output gave: " + unordered.size)
+        }
+        .sink[(Int,Int,Int)](SequenceFile("subsample")) { outBuf => 
+          val unordered = outBuf.toSet
+          println("bf gave: " + unordered.size)
+          unordered.size must be_>=(1000)
+        }
+        .runHadoop
+        .finish
+    }
+  }
+}
+
 class UseInputTracingTest extends Specification with TupleConversions {
   import Dsl._
   "Running with --use_sources" should {

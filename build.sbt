@@ -38,6 +38,8 @@ libraryDependencies += "com.joestelmach" % "natty" % "0.7"
 
 libraryDependencies += "io.backchat.jerkson" % "jerkson_2.9.2" % "0.7.0"
 
+libraryDependencies += "com.googlecode.javaewah" % "JavaEWAH" % "0.6.6"
+
 libraryDependencies ++= Seq(
   "org.scalacheck" %% "scalacheck" % "1.10.0" % "test",
   "org.scala-tools.testing" % "specs_2.9.0-1" % "1.6.8" % "test"
