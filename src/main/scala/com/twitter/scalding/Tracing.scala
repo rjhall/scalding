@@ -1,5 +1,7 @@
 package com.twitter.scalding
 
+import scala.collection.JavaConverters._
+
 import cascading.flow.FlowDef
 import cascading.pipe.Pipe
 import cascading.tuple.{Fields,Tuple,TupleEntry}
@@ -16,8 +18,8 @@ object Tracing {
     if(args.boolean("write_sources")) {
       if(args.boolean("bf")) {
         tracing = new BloomFilterInputTracing(
-          args.getOrElse("bf_hashes", 7.toString).toInt,
-          args.getOrElse("bf_width", (1 << 30).toString).toInt,
+          args.getOrElse("bf_hashes", 5.toString).toInt,
+          args.getOrElse("bf_width", (1 << 24).toString).toInt,
           args.getOrElse("tracing_field", "__source_data__"))
       } else {
         tracing = new MapInputTracing(args.getOrElse("tracing_field", "__source_data__"))
@@ -214,13 +216,13 @@ class BloomFilterInputTracing(val bfhashes : Int, val bfwidth: Int, fieldName : 
 
   protected val bfhash : BFHash = BFHash(bfhashes, bfwidth)
 
+  def hash(str : String) : List[Int] = bfhash(str).toList
+
   def prepare(tf : TracingFileSource, pipe : Pipe) : Pipe = {
     val fp = tf.toString
     origpipes += (fp -> pipe)
-    pipe.map(tf.hdfsScheme.getSourceFields -> field){ te : TupleEntry => Map[String, CBitSet](fp -> hash(te.getTuple.toString)) }
+    pipe.map(tf.hdfsScheme.getSourceFields -> field){ te : TupleEntry => Map[String, CBitSet](fp -> CBitSet.bitmapOf(hash(te.getTuple.toString).sorted : _*)) }
   }
-
-  def hash(str : String) : CBitSet = CBitSet.bitmapOf(bfhash(str) : _*)
 
   override def onWrite(pipe : Pipe) : Pipe = {
     if(isTraced(pipe)) {
@@ -245,13 +247,20 @@ class BloomFilterInputTracing(val bfhashes : Int, val bfwidth: Int, fieldName : 
     // Nuke the implicit tracing object to turn off tracing for this step.
     Tracing.tracing = new NullTracing()
     var ret = Map[Source, Pipe]()
+    var expanded = Map[String, Pipe]()
     sources.foreach { ts : TracingFileSource => 
       val n = ts.toString
       if(tailpipes.contains(n) && origpipes.contains(n)) {
+        if(!expanded.contains(n)) {
+          expanded += (n -> tailpipes(n).map[CBitSet,BitSet]('bf -> 'bf){ c : CBitSet =>
+                              val b = new BitSet(new Array[Long](bfwidth/64))
+                              c.asScala.foreach{ i : java.lang.Integer => b.set(i.toInt) }
+                              b })
+        }
         val p = origpipes(n)
                   .map(Fields.ALL -> 'tuplestr){ te : TupleEntry => te.getTuple.toString }
-                  .crossWithTiny(tailpipes(n))
-                  .filter(('tuplestr,'bf)){ x : (String, CBitSet) => val y = hash(x._1); x._2.and(y).equals(y) }
+                  .crossWithTiny(expanded(n))
+                  .filter(('tuplestr, 'bf)){ x : (String, BitSet) => x._2.contains(hash(x._1)) }
                   .discard('tuplestr, 'bf)
         ret += (ts.subset -> p)
       }
@@ -264,4 +273,9 @@ class BloomFilterInputTracing(val bfhashes : Int, val bfwidth: Int, fieldName : 
     b.foreach{ x : (String, CBitSet) => m += (x._1 -> (if(m.contains(x._1)) x._2.or(m(x._1)) else x._2)) }
     m
   }
+}
+  
+class BitSet(val bits : Array[Long]) extends Serializable {
+  def set(loc : Int) : Unit = bits(loc/64) |= 1L << (loc % 64)
+  def contains(locs : List[Int]) : Boolean = locs.map{i : Int => (bits(i/64) & (1L << (i % 64))) != 0L}.reduce{_&&_}
 }
