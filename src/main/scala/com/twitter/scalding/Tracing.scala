@@ -126,7 +126,7 @@ abstract class BaseInputTracing[T](val fieldName : String) extends Tracing with 
     val ret = 
       if(lefttracing.get) {
         if(righttracing.get) {
-          pipe.map((fieldName, fieldName+"_") -> fieldName){ m : (T, T) => merge(m._1, m._2)}
+          pipe.map((fieldName, fieldName+"_") -> fieldName){ m : (T, T) => mergeSafe(m._1, m._2)}
         } else {
           pipe
         }
@@ -150,6 +150,16 @@ abstract class BaseInputTracing[T](val fieldName : String) extends Tracing with 
   }
 
   def merge(a : T, b : T) : T
+
+  def mergeSafe(a : T, b : T) : T = {
+    if(a == null) {
+      b
+    } else if(b == null) {
+      a
+    } else {
+      merge(a,b)
+    }
+  }
 }
 
 // This class throws the entire input tuples into the tracing field.  The field 

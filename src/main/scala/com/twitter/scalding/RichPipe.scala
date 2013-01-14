@@ -261,10 +261,14 @@ class RichPipe(val pipe : Pipe) extends java.io.Serializable with JoinAlgorithms
   }
 
   def subsample(p : Double)(implicit tracing : Tracing) : Pipe = {
+    subsample(Fields.ALL, p)
+  }
+
+  def subsample(fields : Fields, p : Double)(implicit tracing : Tracing) : Pipe = {
     if(tracing.isTraced(pipe)) {
       tracing.tracingFields match {
-        case Some(tf) => subsample[TupleEntry](Fields.ALL, p){ t : TupleEntry => val s = new Tuple(t.getTuple); s.remove(t.getFields, tf); s.hashCode }
-        case _ => subsample[TupleEntry](Fields.ALL, p){ t : TupleEntry => t.getTuple.hashCode }
+        case Some(tf) => subsample[TupleEntry](fields, p){ t : TupleEntry => val s = new Tuple(t.getTuple); s.remove(t.getFields, tf); s.hashCode }
+        case _ => subsample[TupleEntry](fields, p){ t : TupleEntry => t.getTuple.hashCode }
       }
     } else {
       subsample[TupleEntry](Fields.ALL, p){ t : TupleEntry => t.getTuple.hashCode }
