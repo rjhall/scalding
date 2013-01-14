@@ -271,7 +271,7 @@ class RichPipe(val pipe : Pipe) extends java.io.Serializable with JoinAlgorithms
         case _ => subsample[TupleEntry](fields, p){ t : TupleEntry => t.getTuple.hashCode }
       }
     } else {
-      subsample[TupleEntry](Fields.ALL, p){ t : TupleEntry => t.getTuple.hashCode }
+      subsample[TupleEntry](fields, p){ t : TupleEntry => t.getTuple.hashCode }
     }
   }
 

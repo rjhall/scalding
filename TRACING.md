@@ -20,7 +20,7 @@ whichever source files you want to be traced.  A canonical example is e.g.,
 
     class ExampleJob(args : Args) extends InputTracingJob(args) {
       TracingFileSource(Tsv("example_input1"), "subsample/input1")
-        .optionalSubsample(0.0001)
+        .subsample('some_fields, 0.0001)
         .joinWithSmaller('key1 -> 'key2, TracingFileSource(SequenceFile("example_input2", "sample/input2"))
         .write(SequenceFile("foo.seq"))
     }
@@ -53,12 +53,12 @@ be written (and subsequently read from).
 InputTracingJob simply provides the convenience methods for the wrapping of sources, and also sets up the flow to
 write the subsets on completion of the job.
 
-Finally the method `optionalSubsample` can be used from within an InputTracingJob.  What this method does depends on the 
-commandline flags.  In the case that no option is sprcified, or `--write_sources` is used, then this method keeps a fraction
-of the rows of the pipe that is approximately equal to the parameter, and discards the rest.  In the case that `--use_sources` is
-used, then this method does nothing (since the subsampling would have already happened during the generation of the subsampled data).
-The subsampling is implemented by hashing the pipe contents rather than by random number generation, therefore repeated runs of the same job
-will always generate the same subsample.
+Finally the method `subsample` is a new addition to RichPipe.  It takes a field argument and a fraction, and keeps that fraction of the unique values 
+which appear in those fields (and all rows having those value).  For example `subsample('user_id, 0.1)` will keep approximaely 10% of all the
+user_ids, and each row for each of the kept id's (in the case that multiple rows can have the same value of the field).
+This method uses hashing to determine which rows to keep, therefore when running the job on the previously output subsamples of the data,
+the same rows will be kept as before (alghough it is possible that they consitute a much greater fraction of the pipe contents).
+Also note that  repeated runs of the same job will always generate the same subsample.
 
 Details
 -----
@@ -88,6 +88,6 @@ on its own, however when this result is then joined to a second pipe it could le
 intermediate files.  Thus, if you know a source file is going to be involved in a groupAll, do not use tracing for that source.
 
  - Since the subsampling operation is performed via hashing, it may behave in a way which is unintuitive to the user.  For example
-saying `pipe.optionalSubsample(0.1).optionalSubsample(0.1)` will be the same as `pipe.optionalSubsample(0.1)`, since whatever elements
+saying `pipe.subsample(0.1).subsample(0.1)` will be the same as `pipe.subsample(0.1)`, since whatever elements
 are retained in the first call are also retained in the second call.  This is not necessarily true when the two calls take different
 parameter values though.
