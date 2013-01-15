@@ -266,7 +266,7 @@ class RichPipe(val pipe : Pipe) extends java.io.Serializable with JoinAlgorithms
     val q : Long = math.round(1.0/p)
     if(tracing.isTraced(pipe)) {
       tracing.tracingFields match {
-        case Some(tf) => filter[TupleEntry](fields){ t : TupleEntry => val s = new Tuple(t.getTuple); s.remove(t.getFields, tf); s.hashCode % q == 0 }
+        case Some(tf) => filter[TupleEntry](fields){ t : TupleEntry => val s = new Tuple(t.getTuple); if(t.getFields.contains(tf)) s.remove(t.getFields, tf); s.hashCode % q == 0 }
         case _ => filter[TupleEntry](fields, p){ t : TupleEntry => t.getTuple.hashCode %q == 0}
       }
     } else {
