@@ -164,10 +164,14 @@ class RichPipe(val pipe : Pipe) extends java.io.Serializable with JoinAlgorithms
     tracing.onGroupBy(builder(new GroupBuilder(f)), pipe).schedule(pipe.getName, pipe)
   }
 
+  def groupByNoMerge(f : Fields)(builder : GroupBuilder => GroupBuilder)(implicit tracing : Tracing) : Pipe = {
+    tracing.onGroupByNoMerge(builder(new GroupBuilder(f)), pipe).schedule(pipe.getName, pipe)
+  }
+
   /**
    * Returns the set of unique tuples containing the specified fields
    */
-  def unique(f : Fields) : Pipe = groupBy(f) { _.size('__uniquecount__) }.project(f)
+  def unique(f : Fields) : Pipe = groupByNoMerge(f) { _.size('__uniquecount__) }.project(f)
 
   /**
    * Merge or Concatenate several pipes together with this one:
@@ -254,24 +258,19 @@ class RichPipe(val pipe : Pipe) extends java.io.Serializable with JoinAlgorithms
    * Subsample the entries in the pipe.
    * Hash some fields rather than use random noise, for the sake of reproduceability.
    */
-  def subsample[A](f : Fields, p : Double)(hash : (A) => Int)
-      (implicit conv : TupleConverter[A]) : Pipe = {
-    val q : Long = math.round(1.0/p)
-    filter[A](f){ input : (A) => hash(input) % q == 0 }(conv)
-  }
-
   def subsample(p : Double)(implicit tracing : Tracing) : Pipe = {
     subsample(Fields.ALL, p)
   }
 
   def subsample(fields : Fields, p : Double)(implicit tracing : Tracing) : Pipe = {
+    val q : Long = math.round(1.0/p)
     if(tracing.isTraced(pipe)) {
       tracing.tracingFields match {
-        case Some(tf) => subsample[TupleEntry](fields, p){ t : TupleEntry => val s = new Tuple(t.getTuple); s.remove(t.getFields, tf); s.hashCode }
-        case _ => subsample[TupleEntry](fields, p){ t : TupleEntry => t.getTuple.hashCode }
+        case Some(tf) => filter[TupleEntry](fields){ t : TupleEntry => val s = new Tuple(t.getTuple); s.remove(t.getFields, tf); s.hashCode % q == 0 }
+        case _ => filter[TupleEntry](fields, p){ t : TupleEntry => t.getTuple.hashCode %q == 0}
       }
     } else {
-      subsample[TupleEntry](fields, p){ t : TupleEntry => t.getTuple.hashCode }
+      filter[TupleEntry](fields, p){ t : TupleEntry => t.getTuple.hashCode % q == 0}
     }
   }
 
@@ -415,6 +414,7 @@ class RichPipe(val pipe : Pipe) extends java.io.Serializable with JoinAlgorithms
   def debug = new Each(pipe, new Debug())
 
   def write(outsource : Source)(implicit flowDef : FlowDef, mode : Mode, tracing : Tracing) = {
+    Tracing.tracing = new NullTracing()
     tracing.tracingFields match {
       case Some(fields) => {
         if(tracing.isTraced(pipe))
@@ -424,6 +424,7 @@ class RichPipe(val pipe : Pipe) extends java.io.Serializable with JoinAlgorithms
       }
       case None => outsource.writeFrom(pipe)(flowDef, mode)
     }
+    Tracing.tracing = tracing
     tracing.onWrite(pipe)
   }
   /**

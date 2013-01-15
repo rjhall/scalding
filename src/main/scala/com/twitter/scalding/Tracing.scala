@@ -45,6 +45,7 @@ abstract class Tracing {
 
   // Called by RichPipe.groupBy
   def onGroupBy(groupbuilder : GroupBuilder, pipe : Pipe) : GroupBuilder
+  def onGroupByNoMerge(groupbuilder : GroupBuilder, pipe : Pipe) : GroupBuilder
 
   // Called by SourceTracingJob.buildFlow
   def onFlowComplete : Map[Source, Pipe]
@@ -64,6 +65,7 @@ class NullTracing extends Tracing {
   override def beforeJoin(pipe : Pipe, side : Boolean) : Pipe = pipe
   override def afterJoin(pipe : Pipe) : Pipe = pipe
   override def onGroupBy(groupbuilder : GroupBuilder, pipe : Pipe) : GroupBuilder = groupbuilder
+  override def onGroupByNoMerge(groupbuilder : GroupBuilder, pipe : Pipe) : GroupBuilder = groupbuilder
   def onFlowComplete : Map[Source, Pipe] = Map[Source, Pipe]()
   override def tracingFields : Option[Fields] = None
   override def isTraced(pipe : Pipe) = false
@@ -145,6 +147,13 @@ abstract class BaseInputTracing[T](val fieldName : String) extends Tracing with 
   override def onGroupBy(groupbuilder : GroupBuilder, pipe : Pipe) : GroupBuilder = {
     if(isTraced(pipe))
       groupbuilder.reduce[T](field -> field)(merge)
+    else
+      groupbuilder
+  }
+
+  override def onGroupByNoMerge(groupbuilder : GroupBuilder, pipe : Pipe) : GroupBuilder = {
+    if(isTraced(pipe))
+      groupbuilder.reduce[T](field -> field){ (a : T, b : T) => a }
     else
       groupbuilder
   }
