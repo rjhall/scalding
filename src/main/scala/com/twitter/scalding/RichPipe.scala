@@ -29,6 +29,8 @@ import cascading.cascade._
 
 import scala.util.Random
 
+import java.security.MessageDigest
+
 object RichPipe extends java.io.Serializable {
   private var nextPipe = -1
 
@@ -54,6 +56,15 @@ object RichPipe extends java.io.Serializable {
       throw new IllegalArgumentException("Number of reducers must be non-negative")
     }
     p
+  }
+}
+
+object MD5Hash extends java.io.Serializable {
+  private val hash = MessageDigest.getInstance("MD5")
+  def apply(s : String) : Int = {
+    hash.reset
+    val h : Array[Byte] = hash.digest(s.getBytes)
+    (h(0).toInt << 24) + (h(1).toInt << 16) + (h(2).toInt << 8) + h(3).toInt
   }
 }
 
@@ -266,11 +277,11 @@ class RichPipe(val pipe : Pipe) extends java.io.Serializable with JoinAlgorithms
     val q : Long = math.round(1.0/p)
     if(tracing.isTraced(pipe)) {
       tracing.tracingFields match {
-        case Some(tf) => filter[TupleEntry](fields){ t : TupleEntry => val s = new Tuple(t.getTuple); if(t.getFields.contains(tf)) s.remove(t.getFields, tf); s.hashCode % q == 0 }
-        case _ => filter[TupleEntry](fields, p){ t : TupleEntry => t.getTuple.hashCode %q == 0}
+        case Some(tf) => filter[TupleEntry](fields){ t : TupleEntry => val s = new Tuple(t.getTuple); if(t.getFields.contains(tf)) s.remove(t.getFields, tf); MD5Hash(s.toString) % q == 0 }
+        case _ => filter[TupleEntry](fields, p){ t : TupleEntry => MD5Hash(t.getTuple.toString) %q == 0}
       }
     } else {
-      filter[TupleEntry](fields, p){ t : TupleEntry => t.getTuple.hashCode % q == 0}
+      filter[TupleEntry](fields, p){ t : TupleEntry => MD5Hash(t.getTuple.toString) % q == 0}
     }
   }
 
