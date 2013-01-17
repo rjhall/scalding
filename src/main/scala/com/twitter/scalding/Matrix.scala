@@ -53,18 +53,18 @@ import scala.annotation.tailrec
 // Add methods we want to add to pipes here:
 class MatrixPipeExtensions(pipe : Pipe) {
   def toMatrix[RowT,ColT,ValT](fields : Fields)
-    (implicit conv : TupleConverter[(RowT,ColT,ValT)], setter : TupleSetter[(RowT,ColT,ValT)]) = {
-    val matPipe = RichPipe(pipe).mapTo(fields -> ('row,'col,'val))((tup : (RowT,ColT,ValT)) => tup)(conv,setter)
+    (implicit conv : TupleConverter[(RowT,ColT,ValT)], setter : TupleSetter[(RowT,ColT,ValT)], tracing : Tracing) = {
+    val matPipe = RichPipe(pipe).mapTo(fields -> ('row,'col,'val))((tup : (RowT,ColT,ValT)) => tup)(conv,setter,tracing)
     new Matrix[RowT,ColT,ValT]('row, 'col, 'val, matPipe)
   }
   def mapToMatrix[T,RowT,ColT,ValT](fields : Fields)(mapfn : T => (RowT,ColT,ValT))
-    (implicit conv : TupleConverter[T], setter : TupleSetter[(RowT,ColT,ValT)]) = {
-    val matPipe = RichPipe(pipe).mapTo(fields -> ('row,'col,'val))(mapfn)(conv,setter)
+    (implicit conv : TupleConverter[T], setter : TupleSetter[(RowT,ColT,ValT)], tracing : Tracing) = {
+    val matPipe = RichPipe(pipe).mapTo(fields -> ('row,'col,'val))(mapfn)(conv,setter,tracing)
     new Matrix[RowT,ColT,ValT]('row, 'col, 'val, matPipe)
   }
   def flatMapToMatrix[T,RowT,ColT,ValT](fields : Fields)(flatMapfn : T => Iterable[(RowT,ColT,ValT)])
-    (implicit conv : TupleConverter[T], setter : TupleSetter[(RowT,ColT,ValT)]) = {
-    val matPipe = RichPipe(pipe).flatMapTo(fields -> ('row,'col,'val))(flatMapfn)(conv,setter)
+    (implicit conv : TupleConverter[T], setter : TupleSetter[(RowT,ColT,ValT)], tracing : Tracing) = {
+    val matPipe = RichPipe(pipe).flatMapTo(fields -> ('row,'col,'val))(flatMapfn)(conv,setter,tracing)
     new Matrix[RowT,ColT,ValT]('row, 'col, 'val, matPipe)
   }
 }

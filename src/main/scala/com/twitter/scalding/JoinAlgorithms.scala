@@ -27,6 +27,8 @@ import cascading.operation.filter._
 import cascading.tuple._
 import cascading.cascade._
 
+import com.twitter.algebird.Operators._
+
 import scala.util.Random
 
 /*
@@ -116,6 +118,14 @@ trait JoinAlgorithms {
     }
   }
 
+  def prepareJoin(p : Pipe, left : Boolean)(implicit tracing : Tracing) : Pipe = {
+      tracing.beforeJoin(p, left)
+  }
+
+  def finishJoin(p : Pipe)(implicit tracing : Tracing) : Pipe = {
+      tracing.afterJoin(p)
+  }
+
   /**
    * Joins the first set of keys in the first pipe to the second set of keys in the second pipe.
    * All keys must be unique UNLESS it is an inner join, then duplicated join keys are allowed, but
@@ -136,10 +146,10 @@ trait JoinAlgorithms {
     val intersection = asSet(fs._1).intersect(asSet(fs._2))
     if (intersection.size == 0) {
       // Common case: no intersection in names: just CoGroup, which duplicates the grouping fields:
-      pipe.coGroupBy(fs._1, joiners._1) {
-        _.coGroup(fs._2, that, joiners._2)
+      finishJoin(prepareJoin(pipe, false).coGroupBy(fs._1, joiners._1) {
+        _.coGroup(fs._2, prepareJoin(that, true), joiners._2)
           .reducers(reducers)
-      }
+      })
     }
     else if (joiners._1 == InnerJoinMode && joiners._2 == InnerJoinMode) {
       /*
@@ -148,10 +158,10 @@ trait JoinAlgorithms {
        * So, we rename the right hand side to temporary names, then discard them after the operation
        */
       val (renamedThat, newJoinFields, temp) = renameCollidingFields(that, fs._2, intersection)
-      pipe.coGroupBy(fs._1, joiners._1) {
-        _.coGroup(newJoinFields, renamedThat, joiners._2)
+      finishJoin(prepareJoin(pipe,false).coGroupBy(fs._1, joiners._1) {
+        _.coGroup(newJoinFields, prepareJoin(renamedThat, true), joiners._2)
           .reducers(reducers)
-      }.discard(temp)
+      }.discard(temp))
     }
     else {
       throw new IllegalArgumentException("join keys must be disjoint unless you are doing an InnerJoin.  Found: " +
@@ -186,19 +196,20 @@ trait JoinAlgorithms {
    */
   def joinWithTiny(fs :(Fields,Fields), that : Pipe) = {
     val intersection = asSet(fs._1).intersect(asSet(fs._2))
+    val pt = prepareJoin(that, true)
     if (intersection.size == 0) {
-      new HashJoin(assignName(pipe), fs._1, assignName(that), fs._2, new InnerJoin)
+      finishJoin(new HashJoin(assignName(prepareJoin(pipe, false)), fs._1, assignName(pt), fs._2, new InnerJoin))
     }
     else {
-      val (renamedThat, newJoinFields, temp) = renameCollidingFields(that, fs._2, intersection)
-      (new HashJoin(assignName(pipe), fs._1, assignName(renamedThat), newJoinFields, new InnerJoin))
-        .discard(temp)
+      val (renamedThat, newJoinFields, temp) = renameCollidingFields(pt, fs._2, intersection)
+      finishJoin((new HashJoin(assignName(prepareJoin(pipe, false)), fs._1, assignName(renamedThat), newJoinFields, new InnerJoin))
+        .discard(temp))
     }
   }
 
   def leftJoinWithTiny(fs :(Fields,Fields), that : Pipe) = {
     //Rename these pipes to avoid cascading name conflicts
-    new HashJoin(assignName(pipe), fs._1, assignName(that), fs._2, new LeftJoin)
+    finishJoin(new HashJoin(assignName(prepareJoin(pipe, false)), fs._1, assignName(prepareJoin(that, true)), fs._2, new LeftJoin))
   }
 
   /**
@@ -241,16 +252,16 @@ trait JoinAlgorithms {
     val rightFields = new Fields("__RIGHT_I__", "__RIGHT_J__")
 
     // Add the new dummy replication fields
-    val newLeft = addReplicationFields(pipe, leftFields, leftReplication, rightReplication)
-    val newRight = addReplicationFields(otherPipe, rightFields, rightReplication, leftReplication, swap = true)
+    val newLeft = addReplicationFields(prepareJoin(pipe, false), leftFields, leftReplication, rightReplication)
+    val newRight = addReplicationFields(prepareJoin(otherPipe, true), rightFields, rightReplication, leftReplication, swap = true)
 
     val leftJoinFields = Fields.join(fs._1, leftFields)
     val rightJoinFields = Fields.join(fs._2, rightFields)
 
-    newLeft
+    finishJoin(newLeft
       .joinWithSmaller((leftJoinFields, rightJoinFields), newRight, joiner, reducers)
       .discard(leftFields)
-      .discard(rightFields)
+      .discard(rightFields))
   }
 
   /**

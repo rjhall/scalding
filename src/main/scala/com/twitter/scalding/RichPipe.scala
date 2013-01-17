@@ -29,6 +29,8 @@ import cascading.cascade._
 
 import scala.util.Random
 
+import java.security.MessageDigest
+
 object RichPipe extends java.io.Serializable {
   private var nextPipe = -1
 
@@ -57,7 +59,17 @@ object RichPipe extends java.io.Serializable {
   }
 }
 
+object MD5Hash extends java.io.Serializable {
+  private val hash = MessageDigest.getInstance("MD5")
+  def apply(s : String) : Int = {
+    hash.reset
+    val h : Array[Byte] = hash.digest(s.getBytes)
+    (h(0).toInt << 24) + (h(1).toInt << 16) + (h(2).toInt << 8) + h(3).toInt
+  }
+}
+
 class RichPipe(val pipe : Pipe) extends java.io.Serializable with JoinAlgorithms {
+
   // We need this for the implicits
   import Dsl._
   import RichPipe.assignName
@@ -124,8 +136,16 @@ class RichPipe(val pipe : Pipe) extends java.io.Serializable with JoinAlgorithms
    * takes any number of parameters as long as we can convert
    * them to a fields object
    */
-  def project(fields : Fields) = {
-    new Each(pipe, fields, new Identity(fields))
+  def project(fields : Fields)(implicit tracing : Tracing) = {
+      tracing.tracingFields match {
+          case Some(tracingFields) => {  
+              val f = if(tracing.isTraced(pipe) && !fields.contains(tracingFields)) fields.append(tracingFields) else fields
+              new Each(pipe, f, new Identity(f))
+          }
+          case None => {
+              new Each(pipe, fields, new Identity(fields))
+          }
+      }
   }
 
   /**
@@ -151,14 +171,18 @@ class RichPipe(val pipe : Pipe) extends java.io.Serializable with JoinAlgorithms
    *   _.size.max('f1) etc...
    * }}}
    */
-  def groupBy(f : Fields)(builder : GroupBuilder => GroupBuilder) : Pipe = {
-    builder(new GroupBuilder(f)).schedule(pipe.getName, pipe)
+  def groupBy(f : Fields)(builder : GroupBuilder => GroupBuilder)(implicit tracing : Tracing) : Pipe = {
+    tracing.onGroupBy(builder(new GroupBuilder(f)), pipe).schedule(pipe.getName, pipe)
+  }
+
+  def groupByNoMerge(f : Fields)(builder : GroupBuilder => GroupBuilder)(implicit tracing : Tracing) : Pipe = {
+    tracing.onGroupByNoMerge(builder(new GroupBuilder(f)), pipe).schedule(pipe.getName, pipe)
   }
 
   /**
    * Returns the set of unique tuples containing the specified fields
    */
-  def unique(f : Fields) : Pipe = groupBy(f) { _.size('__uniquecount__) }.project(f)
+  def unique(f : Fields) : Pipe = groupByNoMerge(f) { _.size('__uniquecount__) }.project(f)
 
   /**
    * Merge or Concatenate several pipes together with this one:
@@ -194,12 +218,23 @@ class RichPipe(val pipe : Pipe) extends java.io.Serializable with JoinAlgorithms
   /**
    * Like groupAll, but randomly groups data into n reducers.
    */
-  def groupRandomly(n : Int)(gs: GroupBuilder => GroupBuilder) : Pipe = {
+  def groupRandomly(n : Int)(gs: GroupBuilder => GroupBuilder)(implicit tracing : Tracing) : Pipe = {
     using(new Random with Stateful)
       .map(()->'__shard__) { (r:Random, _:Unit) => r.nextInt(n) }
-      .groupBy('__shard__) { gs(_).reducers(n) }
+      .groupBy('__shard__) { g : GroupBuilder => gs(g).reducers(n) } (tracing)
       .discard('__shard__)
   }
+
+  /**
+   * Adds a field with a constant value.
+   *
+   * == Usage ==
+   * {{{
+   * insert('a, 1)
+   * }}}
+   */
+  def insert[A](fs : Fields, value : A)(implicit conv : TupleSetter[A]) : Pipe =
+    map(() -> fs) { _:Unit => value }
 
   /**
    * Rename some set of N fields as another set of N fields
@@ -228,6 +263,26 @@ class RichPipe(val pipe : Pipe) extends java.io.Serializable with JoinAlgorithms
       (implicit conv : TupleConverter[A]) : Pipe = {
     conv.assertArityMatches(f)
     new Each(pipe, f, new FilterFunction(fn, conv))
+  }
+
+  /**
+   * Subsample the entries in the pipe.
+   * Hash some fields rather than use random noise, for the sake of reproduceability.
+   */
+  def subsample(p : Double)(implicit tracing : Tracing) : Pipe = {
+    subsample(Fields.ALL, p)
+  }
+
+  def subsample(fields : Fields, p : Double)(implicit tracing : Tracing) : Pipe = {
+    val q : Long = math.round(1.0/p)
+    if(tracing.isTraced(pipe)) {
+      tracing.tracingFields match {
+        case Some(tf) => filter[TupleEntry](fields){ t : TupleEntry => val s = new Tuple(t.getTuple); if(t.getFields.contains(tf)) s.remove(t.getFields, tf); MD5Hash(s.toString) % q == 0 }
+        case _ => filter[TupleEntry](fields, p){ t : TupleEntry => MD5Hash(t.getTuple.toString) %q == 0}
+      }
+    } else {
+      filter[TupleEntry](fields, p){ t : TupleEntry => MD5Hash(t.getTuple.toString) % q == 0}
+    }
   }
 
   /**
@@ -267,10 +322,15 @@ class RichPipe(val pipe : Pipe) extends java.io.Serializable with JoinAlgorithms
       each(fs)(new MapFunction[A,T](fn, _, conv, setter))
   }
   def mapTo[A,T](fs : (Fields,Fields))(fn : A => T)
-                (implicit conv : TupleConverter[A], setter : TupleSetter[T]) : Pipe = {
+                (implicit conv : TupleConverter[A], setter : TupleSetter[T], tracing : Tracing) : Pipe = {
       conv.assertArityMatches(fs._1)
       setter.assertArityMatches(fs._2)
-      eachTo(fs)(new MapFunction[A,T](fn, _, conv, setter))
+      tracing.tracingFields match {
+          case Some(fields)  =>
+              each(fs)(new MapFunction[A,T](fn, _, conv, setter)).project(fs._2)
+          case None =>
+              eachTo(fs)(new MapFunction[A,T](fn, _, conv, setter))
+      }
   }
   def flatMap[A,T](fs : (Fields,Fields))(fn : A => Iterable[T])
                 (implicit conv : TupleConverter[A], setter : TupleSetter[T]) : Pipe = {
@@ -279,10 +339,15 @@ class RichPipe(val pipe : Pipe) extends java.io.Serializable with JoinAlgorithms
       each(fs)(new FlatMapFunction[A,T](fn, _, conv, setter))
   }
   def flatMapTo[A,T](fs : (Fields,Fields))(fn : A => Iterable[T])
-                (implicit conv : TupleConverter[A], setter : TupleSetter[T]) : Pipe = {
+                (implicit conv : TupleConverter[A], setter : TupleSetter[T], tracing : Tracing) : Pipe = {
       conv.assertArityMatches(fs._1)
       setter.assertArityMatches(fs._2)
-      eachTo(fs)(new FlatMapFunction[A,T](fn, _, conv, setter))
+      tracing.tracingFields match {
+          case Some(fields) =>
+              each(fs)(new FlatMapFunction[A,T](fn, _, conv, setter)).project(fs._2)
+          case None =>
+              eachTo(fs)(new FlatMapFunction[A,T](fn, _, conv, setter))
+      }
   }
 
   /**
@@ -359,11 +424,20 @@ class RichPipe(val pipe : Pipe) extends java.io.Serializable with JoinAlgorithms
 
   def debug = new Each(pipe, new Debug())
 
-  def write(outsource : Source)(implicit flowDef : FlowDef, mode : Mode) = {
-    outsource.writeFrom(pipe)(flowDef, mode)
-    pipe
+  def write(outsource : Source)(implicit flowDef : FlowDef, mode : Mode, tracing : Tracing) = {
+    Tracing.tracing = new NullTracing()
+    tracing.tracingFields match {
+      case Some(fields) => {
+        if(tracing.isTraced(pipe))
+          outsource.writeFrom(discard(fields))(flowDef, mode)
+        else
+          outsource.writeFrom(pipe)(flowDef, mode)
+      }
+      case None => outsource.writeFrom(pipe)(flowDef, mode)
+    }
+    Tracing.tracing = tracing
+    tracing.onWrite(pipe)
   }
-
   /**
    * Adds a trap to the current pipe,
    * which will capture all exceptions that occur in this pipe
@@ -415,11 +489,11 @@ class RichPipe(val pipe : Pipe) extends java.io.Serializable with JoinAlgorithms
   /**
    * Same as pack but only the to fields are preserved.
    */
-  def packTo[T](fs : (Fields, Fields))(implicit packer : TuplePacker[T], setter : TupleSetter[T]) : Pipe = {
+  def packTo[T](fs : (Fields, Fields))(implicit packer : TuplePacker[T], setter : TupleSetter[T], tracing : Tracing) : Pipe = {
     val (fromFields, toFields) = fs
     assert(toFields.size == 1, "Can only output 1 field in pack")
     val conv = packer.newConverter(fromFields)
-    pipe.mapTo(fs) { input : T => input } (conv, setter)
+    pipe.mapTo(fs) { input : T => input } (conv, setter, tracing)
   }
 
   /**
@@ -442,11 +516,11 @@ class RichPipe(val pipe : Pipe) extends java.io.Serializable with JoinAlgorithms
   /**
    * Same as unpack but only the to fields are preserved.
    */
-  def unpackTo[T](fs : (Fields, Fields))(implicit unpacker : TupleUnpacker[T], conv : TupleConverter[T]) : Pipe = {
+  def unpackTo[T](fs : (Fields, Fields))(implicit unpacker : TupleUnpacker[T], conv : TupleConverter[T], tracing : Tracing) : Pipe = {
     val (fromFields, toFields) = fs
     assert(fromFields.size == 1, "Can only take 1 input field in unpack")
     val setter = unpacker.newSetter(toFields)
-    pipe.mapTo(fs) { input : T => input } (conv, setter)
+    pipe.mapTo(fs) { input : T => input } (conv, setter, tracing)
   }
 }
 
