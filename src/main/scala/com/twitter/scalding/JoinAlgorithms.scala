@@ -135,8 +135,6 @@ trait JoinAlgorithms {
     implicit val bfm : BloomFilterMonoid = BloomFilter(small_pipe_size, false_pos_rate)
     val bfp = that.mapTo(fs._2 -> '__bf){ x : TupleEntry => bfm.create(x.getTuple.toString) }
       .groupAll{ _.plus[BF]('__bf -> '__bf) }
-      .map('__bf -> '__bf){ x : BFSparse => x.dense }
-      .forceToDisk
     val fp = pipe.map(fs._1 -> '__str){ x : TupleEntry => x.getTuple.toString }
       .crossWithTiny(bfp)
       .filter('__str, '__bf) { x : (String, BF) => x._2.contains(x._1) != ApproximateBoolean.exactFalse }
