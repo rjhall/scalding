@@ -30,6 +30,10 @@ libraryDependencies += "cascading.kryo" % "cascading.kryo" % "0.4.6"
 
 libraryDependencies += "com.twitter" % "maple" % "0.2.4"
 
+libraryDependencies += "com.twitter" % "algebird_2.9.1" % "0.1.7-SNAPSHOT"
+
+libraryDependencies += "com.twitter" % "chill_2.9.2" % "0.1.3"
+
 libraryDependencies += "commons-lang" % "commons-lang" % "2.4"
 
 libraryDependencies += "org.scala-tools.testing" % "specs_2.8.1" % "1.6.6" % "test"

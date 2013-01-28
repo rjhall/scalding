@@ -1,4 +1,5 @@
 /*
+
 Copyright 2012 Twitter, Inc.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -27,6 +28,7 @@ import cascading.operation.filter._
 import cascading.tuple._
 import cascading.cascade._
 
+import com.twitter.algebird._
 import com.twitter.algebird.Operators._
 
 import scala.util.Random
@@ -124,6 +126,23 @@ trait JoinAlgorithms {
 
   def finishJoin(p : Pipe)(implicit tracing : Tracing) : Pipe = {
       tracing.afterJoin(p)
+  }
+
+  def filterAndJoinWithSmaller(fs : (Fields, Fields), that : Pipe, small_pipe_size : Int = 10000, false_pos_rate : Double = 0.1) : Pipe = {
+    val tracing : Tracing = Tracing.tracing
+    Tracing.tracing = new NullTracing
+    // Make a bloom filter of the smaller pipe contents.
+    implicit val bfm : BloomFilterMonoid = BloomFilter(small_pipe_size, false_pos_rate)
+    val bfp = that.mapTo(fs._2 -> '__bf){ x : TupleEntry => bfm.create(x.getTuple.toString) }
+      .groupAll{ _.plus[BF]('__bf -> '__bf) }
+      .map('__bf -> '__bf){ x : BFSparse => x.dense }
+      .forceToDisk
+    val fp = pipe.map(fs._1 -> '__str){ x : TupleEntry => x.getTuple.toString }
+      .crossWithTiny(bfp)
+      .filter('__str, '__bf) { x : (String, BF) => x._2.contains(x._1) != ApproximateBoolean.exactFalse }
+      .discard('__str, '__bf)
+    Tracing.tracing = tracing
+    fp.joinWithSmaller(fs, that)
   }
 
   /**
