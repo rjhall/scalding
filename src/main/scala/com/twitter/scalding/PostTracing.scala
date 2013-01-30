@@ -3,6 +3,7 @@ package com.twitter.scalding
 import scala.collection.JavaConverters._
 
 import cascading.flow.FlowDef
+import cascading.operation.Identity
 import cascading.pipe.{Each, Every, CoGroup, GroupBy, Pipe}
 import cascading.pipe.assembly.AggregateBy
 import cascading.tap.Tap
@@ -41,16 +42,23 @@ object PostTracing extends Serializable {
       fd.addSink(q.getName, flowDef.getSinks.get(q.getName))
       println(q.toString + " -> " + flowDef.getSinks.get(q.getName).toString)
     }
-    tm.foreach{ x : (String, Pipe) => val q = new Pipe(x._1 + "filter", x._2); fd.addTail(q); fd.addSink(x._1+"filter", st(x._1)); println("tracing: " + q + " -> " + st(x._1).toString) }
+    tm.foreach{ x : (String, Pipe) => 
+      val q = new Pipe(x._1 + "filter", x._2)
+      fd.addTail(q); fd.addSink(x._1+"filter", st(x._1))
+      println("tracing: " + q + " -> " + st(x._1).toString)
+    }
     // Connect head taps.
-    head.foreach{ p : Pipe => fd.addSource(p.getName, flowDef.getSources.get(p.getName)); println("head: " + p.toString + " -> " + flowDef.getSources.get(p.getName)) }
+    head.foreach{ p : Pipe => 
+      fd.addSource(p.getName, flowDef.getSources.get(p.getName))
+      println("head: " + p.toString + " -> " + flowDef.getSources.get(p.getName))
+    }
     // Return new flow def.
     println("new flow:")
     print_flow(fd.getTails.asScala.head)
     fd 
   }
 
-  // Build the part of the flow which filters each input file with the built bloomfilters, and output.
+  // Build the part of the flow which filters each input file with the built bloomfilters.
   def tracingTails(tails : List[Pipe]) : Map[String,Pipe] = {
     import Dsl._
     implicit def p2rp(p : Pipe) : RichPipe = RichPipe(p)
@@ -111,11 +119,13 @@ object PostTracing extends Serializable {
               if(p.getFunction.isInstanceOf[AggregateBy.CompositeFunction]) {
                 // These will be replaced with new ones by the AggregateBy.
                 recurseUp(prevs.head)
+              } else if(p.getFunction.isInstanceOf[Identity]) {
+                val f = p.getArgumentSelector.append(field)
+                new Each(recurseUp(prevs.head), f, new Identity(f))
               } else {
                 // Just ensure tracing field is preserved.
                 val outs = p.getOutputSelector
                 val outn = if(outs == Fields.RESULTS || (outs != Fields.ALL && outs != Fields.REPLACE)) p.getFunction.getFieldDeclaration.append(field) else outs
-                println("each with: " + outs + " " + p.getFunction.getFieldDeclaration)
                 new Each(recurseUp(prevs.head), p.getArgumentSelector, p.getFunction, outn)
               }
             } else if(p.isFilter) {
@@ -127,9 +137,9 @@ object PostTracing extends Serializable {
           case p : Every => {
             // Everys and groupBys that are scheduled by the AggregateBy are handled in that guys clause. 
             if(p.isAggregator) {
-              new Every(recurseUp(prevs.head), p.getAggregator, p.getArgumentSelector)
+              new Every(recurseUp(prevs.head), p.getArgumentSelector, p.getAggregator)
             } else if(p.isBuffer) {
-              new Every(recurseUp(prevs.head), p.getBuffer, p.getArgumentSelector)
+              new Every(recurseUp(prevs.head), p.getArgumentSelector, p.getBuffer)
             } else {
               throw new java.lang.Exception("unknown pipe: " + p.toString)
             }
@@ -137,21 +147,35 @@ object PostTracing extends Serializable {
           case p : CoGroup => {
             throw new java.lang.Exception("not yet implemented: " + p.toString)
           }
+          // TODO: set mapred.reduce.tasks on the groupBy (and the aggregateBy.getGroupBy)
           case p : GroupBy => {
-            // This clause should only be reached by a groupBy that does no aggregation.
-            throw new java.lang.Exception("not yet implemented: " + p.toString)
+            // This clause should only be reached by a groupBy that does no AggregateBy.
+            // Thus we can just aggregate the bloom filters on a reducer.
+            val groupfields = p.getKeySelectors.asScala.head._2
+            val q = if(p.isSorted) {
+              new GroupBy(p.getName, recurseUp(prevs.head), groupfields, p.getSortingSelectors.asScala.head._2, p.isSortReversed)
+            } else {
+              new GroupBy(p.getName, recurseUp(prevs.head), groupfields)
+            }
+            // Add on a thing to aggregate. TODO: this groupby might not do anything and this will b0rk it.
+            type BM = Map[String,BF]
+            val bfsetter = implicitly[TupleSetter[BM]]
+            val bfconv = implicitly[TupleConverter[BM]]
+            val bfmonoid = implicitly[Monoid[BM]]
+            new Every(q, field, new MRMAggregator[BM,BM,BM]({bf => bf}, {(a,b) => bfmonoid.plus(a,b)}, {bf => bf}, field, bfconv, bfsetter))
           }
           case p : AggregateBy => {
+            // If a groupBys doing the aggregation we can get on board with that and save time.
             val inp = recurseUp(p.getGroupBy.getPrevious.head)
             val groupfields = p.getGroupBy.getKeySelectors.asScala.head._2
             type BM = Map[String,BF]
             val bfsetter = implicitly[TupleSetter[BM]]
             val bfconv = implicitly[TupleConverter[BM]]
-            val monoid = implicitly[Monoid[BM]]
-            val mrm = new MRMBy[BM,BM,BM](field, new Fields("__mid_source_data"), field, {bf => bf}, {(a,b) => monoid.plus(a,b)}, {bf => bf}, bfconv, bfsetter, bfconv, bfsetter)
-            val g = classOf[AggregateBy].getDeclaredField("threshold") // pwn
-            g.setAccessible(true)
-            new AggregateBy(p.getName, inp, groupfields, g.getInt(p), p, mrm)
+            val bfmonoid = implicitly[Monoid[BM]]
+            val mrm = new MRMBy[BM,BM,BM](field, new Fields("__mid_source_data"), field, {bf => bf}, {(a,b) => bfmonoid.plus(a,b)}, {bf => bf}, bfconv, bfsetter, bfconv, bfsetter)
+            val thresholdfield = classOf[AggregateBy].getDeclaredField("threshold") // pwn
+            thresholdfield.setAccessible(true)
+            new AggregateBy(p.getName, inp, groupfields, thresholdfield.getInt(p), p, mrm)
           }
           case p : Pipe => {
             new Pipe(p.getName, recurseUp(prevs.head))
