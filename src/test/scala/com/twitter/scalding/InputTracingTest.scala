@@ -246,3 +246,88 @@ class InputTracingGroupByTest extends Specification with TupleConversions {
     }
   }
 }
+
+
+class PostInputTracingMapJob(args : Args) extends Job(args) {
+  val inp = Tsv("input", ('x,'y))
+  val sm = Map(inp.asInstanceOf[Source] -> Tsv("subsample").asInstanceOf[Source])
+  inp.mapTo(('x, 'y) -> 'z){ x : (Int, Int) => x._1 + x._2 }
+     .write(Tsv("output"))
+  
+  override def buildFlow(implicit mode : Mode) = {
+    validateSources(mode)
+    // Sources are good, now connect the flow:
+    val fd = PostTracing(flowDef, sm)
+    mode.newFlowConnector(config).connect(fd)
+  }
+}
+
+class PostInputTracingMapTest extends Specification with TupleConversions {
+  import Dsl._
+  "This fucking thing" should {
+    //Set up the job:
+    "not fuck up" in {
+      JobTest("com.twitter.scalding.PostInputTracingMapJob")
+        .source(Tsv("input", ('x,'y)), List(("0","1"), ("1","3"), ("2","9")))
+        .sink[(Int)](Tsv("output")) { outBuf =>
+          val unordered = outBuf.toSet
+          unordered.size must be_==(3)
+          unordered((1)) must be_==(true)
+          unordered((4)) must be_==(true)
+          unordered((11)) must be_==(true)
+        }
+        .sink[(Int,Int)](Tsv("subsample")) { outBuf => 
+          val unordered = outBuf.toSet
+          unordered.size must be_==(3)
+          unordered((0,1)) must be_==(true)
+          unordered((1,3)) must be_==(true)
+          unordered((2,9)) must be_==(true)
+        }
+        .runHadoop
+        .finish
+    }
+  }
+}
+
+
+class PostInputTracingGroupByJob(args : Args) extends InputTracingJob(args) {
+  val source = Tsv("input", ('x, 'y))
+  source.groupBy('x){ _.sum('y -> 'y) }
+    .filter('x) { x : Int => x < 2 }
+    .map('y -> 'y){ y : Double => y.toInt }
+    .write(Tsv("output"))
+
+  override def buildFlow(implicit mode : Mode) = {
+    validateSources(mode)
+    // Sources are good, now connect the flow:
+    val fd = PostTracing(flowDef, Map[Source,Source](source -> Tsv("foo/input")))
+    mode.newFlowConnector(config).connect(fd)
+  }
+}
+
+class PostInputTracingGroupByTest extends Specification with TupleConversions {
+  import Dsl._
+  "Source tracing groupby" should {
+    //Set up the job:
+    "correctly track sources" in {
+      JobTest("com.twitter.scalding.PostInputTracingGroupByJob")
+        .source(Tsv("input", ('x,'y)), List(("0","1"), ("0","3"), ("1","9"), ("1", "1"), ("2", "5"), ("2", "3"), ("3", "3")))
+        .sink[(Int,Int)](Tsv("output")) { outBuf =>
+          val unordered = outBuf.toSet
+          unordered.size must be_==(2)
+          unordered((0,4)) must be_==(true)
+          unordered((1,10)) must be_==(true)
+        }
+        .sink[(Int,Int)](Tsv("foo/input")) { outBuf => 
+          val unordered = outBuf.toSet
+          unordered.size must be_==(4)
+          unordered((0,1)) must be_==(true)
+          unordered((0,3)) must be_==(true)
+          unordered((1,1)) must be_==(true)
+          unordered((1,9)) must be_==(true)
+        }
+        .runHadoop
+        .finish
+    }
+  }
+}
