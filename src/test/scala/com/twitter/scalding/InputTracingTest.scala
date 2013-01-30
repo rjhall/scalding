@@ -375,3 +375,52 @@ class PostInputTracingGroupByFoldTest extends Specification with TupleConversion
     }
   }
 }
+
+class PostInputTracingJoinJob(args : Args) extends Job(args) {
+  val source = Tsv("input", ('x, 'y))
+  val source2 = Tsv("input2", ('x, 'z))
+  source.joinWithSmaller('x -> 'x, source2.read)
+    .project('x, 'y, 'z)
+    .write(Tsv("output"))
+
+  override def buildFlow(implicit mode : Mode) = {
+    validateSources(mode)
+    // Sources are good, now connect the flow:
+    val fd = PostTracing(flowDef, Map[Source,Source](source -> Tsv("foo/input"), 
+                                                     source2 -> Tsv("bar/input2")))
+    mode.newFlowConnector(config).connect(fd)
+  }
+}
+
+class PostInputTracingJoinTest extends Specification with TupleConversions {
+  import Dsl._
+  "Source tracing join" should {
+    //Set up the job:
+    "correctly track sources" in {
+      JobTest("com.twitter.scalding.PostInputTracingJoinJob")
+        .arg("write_sources", "true")
+        .source(Tsv("input", ('x,'y)), List(("0","1"), ("1","3"), ("2","9"), ("10", "0")))
+        .source(Tsv("input2", ('x, 'z)), List(("5","1"), ("1","4"), ("2","7")))
+        .sink[(Int,Int,Int)](Tsv("output")) { outBuf =>
+          val unordered = outBuf.toSet
+          unordered.size must be_==(2)
+          unordered((1,3,4)) must be_==(true)
+          unordered((2,9,7)) must be_==(true)
+        }
+        .sink[(Int,Int)](Tsv("foo/input")) { outBuf => 
+          val unordered = outBuf.toSet
+          unordered.size must be_==(2)
+          unordered((1,3)) must be_==(true)
+          unordered((2,9)) must be_==(true)
+        }
+        .sink[(Int,Int)](Tsv("bar/input2")) { outBuf => 
+          val unordered = outBuf.toSet
+          unordered.size must be_==(2)
+          unordered((1,4)) must be_==(true)
+          unordered((2,7)) must be_==(true)
+        }
+        .runHadoop
+        .finish
+    }
+  }
+}

@@ -19,6 +19,8 @@ object PostTracing extends Serializable {
   val field : Fields = new Fields("__source_data__")
   var head : List[Pipe] = List[Pipe]()
 
+  type BM = Map[String,BF]
+
   def reset : Unit = {
     pipe_map = Map[Pipe,Pipe]()
     head = List[Pipe]()
@@ -116,7 +118,9 @@ object PostTracing extends Serializable {
         val pnew : Pipe = pipe match {
           case p : Each => {
             if(p.isFunction) {
-              if(p.getFunction.isInstanceOf[AggregateBy.CompositeFunction]) {
+              if(p.getOutputSelector == Fields.SWAP) {
+                new Each(recurseUp(prevs.head), p.getArgumentSelector, p.getFunction, p.getOutputSelector)
+              } else if(p.getFunction.isInstanceOf[AggregateBy.CompositeFunction]) {
                 // These will be replaced with new ones by the AggregateBy.
                 recurseUp(prevs.head)
               } else if(p.getFunction.isInstanceOf[Identity]) {
@@ -145,7 +149,17 @@ object PostTracing extends Serializable {
             }
           }
           case p : CoGroup => {
-            throw new java.lang.Exception("not yet implemented: " + p.toString)
+            // TODO: self joins.
+            // Rename the tracing field on one side of the input, perform cogroup, then merge fields.
+            if(prevs.size == 2) {
+              val renamedfield = new Fields("__source_data_2__")
+              val left = recurseUp(prevs.head)
+              val right = RichPipe(recurseUp(prevs.tail.head)).rename(field -> renamedfield)
+              val cg = new CoGroup(left, p.getKeySelectors.get(left.getName), right, p.getKeySelectors.get(right.getName), p.getJoiner) 
+              RichPipe(cg).map(field.append(renamedfield) -> field){ x : (BM, BM) => if(x._1 == null) x._2 else if(x._2 == null) x._1 else x._1 + x._2 }
+            } else {
+              throw new java.lang.Exception("not yet implemented: " + p.toString + " with " + prevs.size + " parents")
+            }
           }
           // TODO: set mapred.reduce.tasks on the groupBy (and the aggregateBy.getGroupBy)
           case p : GroupBy => {
@@ -158,7 +172,6 @@ object PostTracing extends Serializable {
               new GroupBy(p.getName, recurseUp(prevs.head), groupfields)
             }
             // Add on a thing to aggregate. TODO: this groupby might not do anything and this will b0rk it.
-            type BM = Map[String,BF]
             val bfsetter = implicitly[TupleSetter[BM]]
             val bfconv = implicitly[TupleConverter[BM]]
             val bfmonoid = implicitly[Monoid[BM]]
@@ -168,7 +181,6 @@ object PostTracing extends Serializable {
             // If a groupBys doing the aggregation we can get on board with that and save time.
             val inp = recurseUp(p.getGroupBy.getPrevious.head)
             val groupfields = p.getGroupBy.getKeySelectors.asScala.head._2
-            type BM = Map[String,BF]
             val bfsetter = implicitly[TupleSetter[BM]]
             val bfconv = implicitly[TupleConverter[BM]]
             val bfmonoid = implicitly[Monoid[BM]]
@@ -186,12 +198,20 @@ object PostTracing extends Serializable {
       }
     }
   }
+
+  def print_flow(i : Int, tail : Pipe) {
+    if(tail.getPrevious.size == 1) {
+      print_flow(i, tail.getPrevious.apply(0))
+    } else {
+      (0 until tail.getPrevious.size).foreach{ j : Int =>
+        print_flow(2*i + j + 1, tail.getPrevious.apply(j))
+      }
+    }
+    println(i + " -- " + tail.toString)
+  }
   
   def print_flow(tail : Pipe) {
-    if(tail.getPrevious.size > 0) {
-      print_flow(tail.getPrevious.apply(0))
-    }
-    println(" -- " + tail.toString)
+    print_flow(0, tail)
   }
 
 }
