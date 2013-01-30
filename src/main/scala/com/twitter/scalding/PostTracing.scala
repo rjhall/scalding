@@ -120,9 +120,6 @@ object PostTracing extends Serializable {
             if(p.isFunction) {
               if(p.getOutputSelector == Fields.SWAP) {
                 new Each(recurseUp(prevs.head), p.getArgumentSelector, p.getFunction, p.getOutputSelector)
-              } else if(p.getFunction.isInstanceOf[AggregateBy.CompositeFunction]) {
-                // These will be replaced with new ones by the AggregateBy.
-                recurseUp(prevs.head)
               } else if(p.getFunction.isInstanceOf[Identity]) {
                 val f = p.getArgumentSelector.append(field)
                 new Each(recurseUp(prevs.head), f, new Identity(f))
@@ -179,7 +176,8 @@ object PostTracing extends Serializable {
           }
           case p : AggregateBy => {
             // If a groupBys doing the aggregation we can get on board with that and save time.
-            val inp = recurseUp(p.getGroupBy.getPrevious.head)
+            // Skip the groupby and the each that preceeds it.
+            val inp = recurseUp(p.getGroupBy.getPrevious.head.getPrevious.head)
             val groupfields = p.getGroupBy.getKeySelectors.asScala.head._2
             val bfsetter = implicitly[TupleSetter[BM]]
             val bfconv = implicitly[TupleConverter[BM]]
