@@ -4,7 +4,7 @@ import scala.collection.JavaConverters._
 
 import cascading.flow.FlowDef
 import cascading.operation.Identity
-import cascading.pipe.{Each, Every, CoGroup, GroupBy, Pipe}
+import cascading.pipe.{CoGroup, Each, Every, GroupBy, HashJoin, Pipe}
 import cascading.pipe.assembly.AggregateBy
 import cascading.tap.Tap
 import cascading.tuple.{Fields,Tuple,TupleEntry}
@@ -151,6 +151,19 @@ object PostTracing extends Serializable {
               new Every(parent, p.getArgumentSelector, p.getBuffer)
             } else {
               throw new java.lang.Exception("unknown pipe: " + p.toString)
+            }
+          }
+          case p : HashJoin => {
+            // TODO: self joins.
+            // Rename the tracing field on one side of the input, perform cogroup, then merge fields.
+            if(prevs.size == 2) {
+              val renamedfield = new Fields("__source_data_2__")
+              val left = recurseUp(prevs.head)
+              val right = recurseUp(prevs.tail.head).rename(field -> renamedfield)
+              val cg = new HashJoin(left, p.getKeySelectors.get(left.getName), right, p.getKeySelectors.get(right.getName), p.getJoiner) 
+              cg.map(field.append(renamedfield) -> field){ x : (BM, BM) => if(x._1 == null) x._2 else if(x._2 == null) x._1 else x._1 + x._2 }
+            } else {
+              throw new java.lang.Exception("not yet implemented: " + p.toString + " with " + prevs.size + " parents")
             }
           }
           case p : CoGroup => {
