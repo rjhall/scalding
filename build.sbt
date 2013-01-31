@@ -20,24 +20,11 @@ resolvers ++= Seq(
 
 //resolvers += "Twitter Artifactory" at "http://artifactory.local.twitter.com/libs-releases-local"
 
-resolvers += Resolver.file(
-  "filesystem-repo",
-  // Obviously needs to be factored out
-  file("/Users/mwalker/development/Ivy/repository")
-)(
-  Patterns(
-    Seq(
-       "[organisation]/[module]/[revision]/ivy-[revision].xml",
-       "[organisation]/[module]/[revision]/ivys/ivy.xml"
-    ),
-    Seq(
-       "[organisation]/[module]/[revision]/[type]s/[artifact]-[revision].[ext]",
-       "[organisation]/[module]/[revision]/[type]s/[artifact].[ext]",
-       "[organisation]/[module]/[revision]/[type]s/[artifact]-[classifier].[ext]"
-    ),
-    false
-  )
-)
+// Uncomment and adjust this to use the local Etsy filesystem repository
+//etsyFSRepoPath := Some("/Users/mwalker/development/Ivy/repository")
+
+// This optionally adds the Etsy filesystem resolver
+resolvers <++= (etsyFSRepoPath) { p => optionallyAddEtsyFSRepo(p) }
 
 libraryDependencies += "cascading" % "cascading-core" % "2.0.2"
 
