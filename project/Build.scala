@@ -22,28 +22,34 @@ object ScaldingBuild extends Build {
   )
 
   /**
-   * To keep code out of build.sbt, process the optional etsyFSRepoPath key
-   * value here.
+   * Optionally create a resolver configured for the Etsy repository.
    */
-  def optionallyAddEtsyFSRepo(path: Option[String]): Seq[sbt.Resolver] = {
-    path.map(p =>
-      Seq(Resolver.file(
-        "filesystem-repo",
-        file(p)
-      )(
-        Patterns(
-          Seq(
-            "[organisation]/[module]/[revision]/ivy-[revision].xml",
-            "[organisation]/[module]/[revision]/ivys/ivy.xml"
-          ),
-          Seq(
-            "[organisation]/[module]/[revision]/[type]s/[artifact]-[revision].[ext]",
-            "[organisation]/[module]/[revision]/[type]s/[artifact].[ext]",
-            "[organisation]/[module]/[revision]/[type]s/[artifact]-[classifier].[ext]"
-          ),
-          false
-        )
-      ))
-    ).getOrElse(Seq())
+  def optionalEtsyResolver(path: Option[String]): Option[sbt.Resolver] = path.map(p =>
+    Resolver.file(
+      "filesystem-repo",
+      file(p)
+    )(
+      Patterns(
+        Seq(
+          "[organisation]/[module]/[revision]/ivy-[revision].xml",
+          "[organisation]/[module]/[revision]/ivys/ivy.xml"
+        ),
+        Seq(
+          "[organisation]/[module]/[revision]/[type]s/[artifact]-[revision].[ext]",
+          "[organisation]/[module]/[revision]/[type]s/[artifact].[ext]",
+          "[organisation]/[module]/[revision]/[type]s/[artifact]-[classifier].[ext]"
+        ),
+        false
+      )
+    )
+  )
+
+  /**
+   * Create a sequence of resolvers that can be easily, and optionally,
+   * combined with the resolvers setting.
+   */
+  def optionallyAddEtsyFSRepo(path: Option[String]): Seq[sbt.Resolver] = optionalEtsyResolver(path) match {
+    case None => Seq()
+    case Some(r) => Seq(r)
   }
 }
