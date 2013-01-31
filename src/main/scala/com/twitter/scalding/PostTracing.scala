@@ -14,12 +14,17 @@ import com.twitter.algebird.Operators._
 
 object PostTracing extends Serializable {
   
-  implicit val bfm = new BloomFilterMonoid(5, 1 << 24, 0)
   var pipe_map : Map[Pipe, Pipe] = Map[Pipe,Pipe]()
   val field : Fields = new Fields("__source_data__")
   var head : List[Pipe] = List[Pipe]()
 
+  // stuff needed to aggregate bloomfilters.
+  import Dsl._
+  implicit val bfm = new BloomFilterMonoid(5, 1 << 24, 0)
   type BM = Map[String,BF]
+  val bmsetter = implicitly[TupleSetter[BM]]
+  val bmconv = implicitly[TupleConverter[BM]]
+  val bmmonoid = implicitly[Monoid[BM]]
 
   def reset : Unit = {
     pipe_map = Map[Pipe,Pipe]()
@@ -62,7 +67,6 @@ object PostTracing extends Serializable {
 
   // Build the part of the flow which filters each input file with the built bloomfilters.
   def tracingTails(tails : List[Pipe]) : Map[String,Pipe] = {
-    import Dsl._
     implicit def p2rp(p : Pipe) : RichPipe = RichPipe(p)
     val filters = tracingFilters(tails)
     var m = Map[String,Pipe]()
@@ -79,7 +83,6 @@ object PostTracing extends Serializable {
 
   // Join together all the bloom filters from all the tails.
   def tracingFilters(tails : List[Pipe]) : Map[String,Pipe] = {
-    import Dsl._
     implicit def p2rp(p : Pipe) : RichPipe = RichPipe(p)
     var m = Map[String,Pipe]()
     tails.foreach{ p : Pipe => 
@@ -100,7 +103,7 @@ object PostTracing extends Serializable {
 
   // Do surgery to instrument the flow for tracing.
   def recurseUp(pipe : Pipe) : Pipe = {
-    import Dsl._
+    implicit def p2rp(p : Pipe) : RichPipe = RichPipe(p)
     if(pipe_map.contains(pipe)) {
       println("reached " + pipe.toString + " again")
       pipe_map(pipe)
@@ -137,10 +140,15 @@ object PostTracing extends Serializable {
           }
           case p : Every => {
             // Everys and groupBys that are scheduled by the AggregateBy are handled in that guys clause. 
+            var parent = recurseUp(prevs.head)
+            if(parent.isInstanceOf[GroupBy]) {
+              // Add on a thing to aggregate.
+              parent = new Every(parent, field, new MRMAggregator[BM,BM,BM]({bf => bf}, {(a,b) => bmmonoid.plus(a,b)}, {bf => bf}, field, bmconv, bmsetter))
+            }
             if(p.isAggregator) {
-              new Every(recurseUp(prevs.head), p.getArgumentSelector, p.getAggregator)
+              new Every(parent, p.getArgumentSelector, p.getAggregator)
             } else if(p.isBuffer) {
-              new Every(recurseUp(prevs.head), p.getArgumentSelector, p.getBuffer)
+              new Every(parent, p.getArgumentSelector, p.getBuffer)
             } else {
               throw new java.lang.Exception("unknown pipe: " + p.toString)
             }
@@ -151,38 +159,29 @@ object PostTracing extends Serializable {
             if(prevs.size == 2) {
               val renamedfield = new Fields("__source_data_2__")
               val left = recurseUp(prevs.head)
-              val right = RichPipe(recurseUp(prevs.tail.head)).rename(field -> renamedfield)
+              val right = recurseUp(prevs.tail.head).rename(field -> renamedfield)
               val cg = new CoGroup(left, p.getKeySelectors.get(left.getName), right, p.getKeySelectors.get(right.getName), p.getJoiner) 
-              RichPipe(cg).map(field.append(renamedfield) -> field){ x : (BM, BM) => if(x._1 == null) x._2 else if(x._2 == null) x._1 else x._1 + x._2 }
+              cg.map(field.append(renamedfield) -> field){ x : (BM, BM) => if(x._1 == null) x._2 else if(x._2 == null) x._1 else x._1 + x._2 }
             } else {
               throw new java.lang.Exception("not yet implemented: " + p.toString + " with " + prevs.size + " parents")
             }
           }
           // TODO: set mapred.reduce.tasks on the groupBy (and the aggregateBy.getGroupBy)
           case p : GroupBy => {
-            // This clause should only be reached by a groupBy that does no AggregateBy.
-            // Thus we can just aggregate the bloom filters on a reducer.
             val groupfields = p.getKeySelectors.asScala.head._2
-            val q = if(p.isSorted) {
+            if(p.isSorted) {
               new GroupBy(p.getName, recurseUp(prevs.head), groupfields, p.getSortingSelectors.asScala.head._2, p.isSortReversed)
             } else {
               new GroupBy(p.getName, recurseUp(prevs.head), groupfields)
             }
-            // Add on a thing to aggregate. TODO: this groupby might not do anything and this will b0rk it.
-            val bfsetter = implicitly[TupleSetter[BM]]
-            val bfconv = implicitly[TupleConverter[BM]]
-            val bfmonoid = implicitly[Monoid[BM]]
-            new Every(q, field, new MRMAggregator[BM,BM,BM]({bf => bf}, {(a,b) => bfmonoid.plus(a,b)}, {bf => bf}, field, bfconv, bfsetter))
           }
           case p : AggregateBy => {
             // If a groupBys doing the aggregation we can get on board with that and save time.
             // Skip the groupby and the each that preceeds it.
-            val inp = recurseUp(p.getGroupBy.getPrevious.head.getPrevious.head)
+            val inp = recurseUp(p.getGroupBy.getPrevious.head.getPrevious.head) // Skip the "Each" it makes.
             val groupfields = p.getGroupBy.getKeySelectors.asScala.head._2
-            val bfsetter = implicitly[TupleSetter[BM]]
-            val bfconv = implicitly[TupleConverter[BM]]
-            val bfmonoid = implicitly[Monoid[BM]]
-            val mrm = new MRMBy[BM,BM,BM](field, new Fields("__mid_source_data"), field, {bf => bf}, {(a,b) => bfmonoid.plus(a,b)}, {bf => bf}, bfconv, bfsetter, bfconv, bfsetter)
+            val mrm = new MRMBy[BM,BM,BM](field, '__mid_source_data, field, 
+              {bf => bf}, {(a,b) => bmmonoid.plus(a,b)}, {bf => bf}, bmconv, bmsetter, bmconv, bmsetter)
             val thresholdfield = classOf[AggregateBy].getDeclaredField("threshold") // pwn
             thresholdfield.setAccessible(true)
             new AggregateBy(p.getName, inp, groupfields, thresholdfield.getInt(p), p, mrm)
