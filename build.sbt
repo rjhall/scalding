@@ -20,6 +20,25 @@ resolvers ++= Seq(
 
 //resolvers += "Twitter Artifactory" at "http://artifactory.local.twitter.com/libs-releases-local"
 
+resolvers += Resolver.file(
+  "filesystem-repo",
+  // Obviously needs to be factored out
+  file("/Users/mwalker/development/Ivy/repository")
+)(
+  Patterns(
+    Seq(
+       "[organisation]/[module]/[revision]/ivy-[revision].xml",
+       "[organisation]/[module]/[revision]/ivys/ivy.xml"
+    ),
+    Seq(
+       "[organisation]/[module]/[revision]/[type]s/[artifact]-[revision].[ext]",
+       "[organisation]/[module]/[revision]/[type]s/[artifact].[ext]",
+       "[organisation]/[module]/[revision]/[type]s/[artifact]-[classifier].[ext]"
+    ),
+    false
+  )
+)
+
 libraryDependencies += "cascading" % "cascading-core" % "2.0.2"
 
 libraryDependencies += "cascading" % "cascading-local" % "2.0.2"
@@ -29,6 +48,10 @@ libraryDependencies += "cascading" % "cascading-hadoop" % "2.0.2"
 libraryDependencies += "cascading.kryo" % "cascading.kryo" % "0.4.6"
 
 libraryDependencies += "com.twitter" % "maple" % "0.2.4"
+
+libraryDependencies += "com.twitter" % "algebird_2.9.1" % "0.1.7-SNAPSHOT"
+
+libraryDependencies += "com.twitter" % "chill_2.9.2" % "0.1.3"
 
 libraryDependencies += "commons-lang" % "commons-lang" % "2.4"
 
