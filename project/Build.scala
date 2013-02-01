@@ -49,13 +49,4 @@ object ScaldingBuild extends Build {
       )
     )
   )
-
-  /**
-   * Create a sequence of resolvers that can be easily, and optionally,
-   * combined with the resolvers setting.
-   */
-  def optionallyAddEtsyFSRepo(path: Option[String]): Seq[sbt.Resolver] = optionalEtsyResolver(path) match {
-    case None => Seq()
-    case Some(r) => Seq(r)
-  }
 }

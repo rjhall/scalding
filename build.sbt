@@ -24,7 +24,11 @@ resolvers ++= Seq(
 //etsyFSRepoPath := Some("/Users/mwalker/development/Ivy/repository")
 
 // This optionally adds the Etsy filesystem resolver
-resolvers <++= (etsyFSRepoPath) { p => optionallyAddEtsyFSRepo(p) }
+resolvers <<= (resolvers, etsyFSRepoPath) { (rs, p) =>
+  optionalEtsyResolver(p)
+    .map(rs :+ _)
+    .getOrElse(rs)
+}
 
 // This optionally points the publish target at the Etsy filesystem resolver
 publishTo <<= (etsyFSRepoPath) { p => optionalEtsyResolver(p) }
