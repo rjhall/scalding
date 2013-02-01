@@ -25,13 +25,13 @@ resolvers ++= Seq(
 
 // This optionally adds the Etsy filesystem resolver
 resolvers <<= (resolvers, etsyFSRepoPath) { (rs, p) =>
-  optionalEtsyResolver(p)
+  optionalEtsyResolver("etsy-fs-repo-resolver", p)
     .map(rs :+ _)
     .getOrElse(rs)
 }
 
 // This optionally points the publish target at the Etsy filesystem resolver
-publishTo <<= (etsyFSRepoPath) { p => optionalEtsyResolver(p) }
+publishTo <<= (etsyFSRepoPath) { p => optionalEtsyResolver("etsy-fs-repo-publish", p) }
 
 libraryDependencies += "cascading" % "cascading-core" % "2.0.2"
 

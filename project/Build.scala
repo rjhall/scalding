@@ -30,11 +30,8 @@ object ScaldingBuild extends Build {
   /**
    * Optionally create a resolver configured for the Etsy repository.
    */
-  def optionalEtsyResolver(path: Option[String]): Option[sbt.Resolver] = path.map(p =>
-    Resolver.file(
-      "filesystem-repo",
-      file(p)
-    )(
+  def optionalEtsyResolver(name: String, path: Option[String]): Option[sbt.Resolver] = path.map(p =>
+    Resolver.file(name, file(p))(
       Patterns(
         Seq(
           "[organisation]/[module]/[revision]/ivy-[revision].xml",
