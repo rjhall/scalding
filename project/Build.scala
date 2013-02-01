@@ -8,7 +8,13 @@ object ScaldingBuild extends Build {
    *
    *   etsyFSRepoPath := "your/path/here"
    *
-   * in build.sbt
+   * in build.sbt or use set in the sbt console:
+   *
+   * > set etsyFSRepoPath := Some("/Users/mwalker/development/Ivy/repository")
+   * [info] Defining *:etsy-fs-repo-path
+   * [info] The new value will be used by *:publish-to, *:resolvers
+   * [info] Reapplying settings...
+   * [info] Set current project to scalding (in build file:/Users/mwalker/development/mrwalker/scalding/)
    */
   val etsyFSRepoPath = SettingKey[Option[String]](
     "etsy-fs-repo-path",
