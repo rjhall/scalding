@@ -68,7 +68,7 @@ abstract class FileSource extends Source {
   override def createTap(readOrWrite : AccessMode)(implicit mode : Mode) : Tap[_,_,_] = {
     mode match {
       // TODO support strict in Local
-      case Local(_) => {
+      case Local(_,_) => {
         val sinkmode = readOrWrite match {
           case Read => SinkMode.KEEP
           case Write => SinkMode.REPLACE

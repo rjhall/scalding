@@ -43,7 +43,7 @@ object Mode {
   /**
   * This mode is used by default by sources in read and write
   */
-  implicit var mode : Mode = Local(false)
+  implicit var mode : Mode = Local(false, new Configuration)
 
   // This should be passed ALL the args supplied after the job name
   def apply(args : Args, config : Configuration) : Mode = {
@@ -54,7 +54,7 @@ object Mode {
     }
 
     if (args.boolean("local"))
-       Local(strictSources)
+       Local(strictSources, config)
     else if (args.boolean("hdfs"))
       Hdfs(strictSources, config)
     else
@@ -65,14 +65,20 @@ object Mode {
 * There are three ways to run jobs
 * sourceStrictness is set to true
 */
-abstract class Mode(val sourceStrictness : Boolean) {
+abstract class Mode(val sourceStrictness : Boolean, val jobConf : Configuration) {
+
   // We can't name two different pipes with the same name.
   // NOTE: there is a subtle bug in scala regarding case classes
   // with multiple sets of arguments, and their equality.
   // For this reason, we use Source.toString as the key in this map
   protected val sourceMap = MMap[String, (Source, Pipe)]()
 
-  def config = Map[AnyRef,AnyRef]()
+  def config : Map[AnyRef,AnyRef] = {
+    jobConf.foldLeft(Map[AnyRef, AnyRef]()) {
+      (acc, kv) => acc + ((kv.getKey, kv.getValue))
+    }
+  }
+
   def newFlowConnector(props : Map[AnyRef,AnyRef]) : FlowConnector
 
   /*
@@ -107,14 +113,6 @@ abstract class Mode(val sourceStrictness : Boolean) {
 
 trait HadoopMode extends Mode {
 
-  def jobConf : Configuration
-
-  override def config = {
-    jobConf.foldLeft(Map[AnyRef, AnyRef]()) {
-      (acc, kv) => acc + ((kv.getKey, kv.getValue))
-    }
-  }
-
   override def newFlowConnector(props : Map[AnyRef,AnyRef]) = {
     new HadoopFlowConnector(props)
   }
@@ -144,20 +142,17 @@ trait TestMode extends Mode {
   override def fileExists(filename : String) : Boolean = fileSet.contains(filename)
 }
 
-case class Hdfs(strict : Boolean, conf : Configuration) extends Mode(strict) with HadoopMode {
-  override def jobConf = conf
+case class Hdfs(strict : Boolean, conf : Configuration) extends Mode(strict, conf) with HadoopMode {
   override def fileExists(filename : String) : Boolean =
     FileSystem.get(jobConf).exists(new Path(filename))
 }
 
 case class HadoopTest(conf : Configuration, buffers : Map[Source,Buffer[Tuple]])
-    extends Mode(false) with HadoopMode with TestMode {
+    extends Mode(false, conf) with HadoopMode with TestMode {
 
   // This is a map from source.toString to disk path
   private val writePaths = MMap[Source, String]()
   private val allPaths = MSet[String]()
-
-  override def jobConf = conf
 
   @tailrec
   private def allocateNewPath(prefix : String, idx : Int) : String = {
@@ -196,12 +191,12 @@ case class HadoopTest(conf : Configuration, buffers : Map[Source,Buffer[Tuple]])
   }
 }
 
-case class Local(strict : Boolean) extends Mode(strict) with CascadingLocal {
+case class Local(strict : Boolean, conf : Configuration) extends Mode(strict, conf) with CascadingLocal {
   override def fileExists(filename : String) : Boolean = new File(filename).exists
 }
 
 /**
 * Memory only testing for unit tests
 */
-case class Test(val buffers : Map[Source,Buffer[Tuple]]) extends Mode(false)
+case class Test(val buffers : Map[Source,Buffer[Tuple]]) extends Mode(false, new Configuration)
   with TestMode with CascadingLocal
