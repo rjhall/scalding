@@ -72,7 +72,7 @@ case class IterableSource[T](@transient iter: Iterable[T], inFields : Fields = F
       sys.error("IterableSource is a Read-only Source")
     }
     mode match {
-      case Local(_) => new MemoryTap[InputStream,OutputStream](localScheme, asBuffer)
+      case Local(_,_) => new MemoryTap[InputStream,OutputStream](localScheme, asBuffer)
       case Test(_) => new MemoryTap[InputStream,OutputStream](localScheme, asBuffer)
       case Hdfs(_, _) => hdfsTap
       case HadoopTest(_,_) => hdfsTap

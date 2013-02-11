@@ -239,7 +239,7 @@ object NullSource extends Source {
       case Read => throw new Exception("not supported, reading from null")
       case Write => mode match {
         case Hdfs(_, _) => new NullTap[JobConf, RecordReader[_,_], OutputCollector[_,_], Any, Any]
-        case Local(_) => new NullTap[Properties, InputStream, OutputStream, Any, Any]
+        case Local(_, _) => new NullTap[Properties, InputStream, OutputStream, Any, Any]
         case Test(_) => new NullTap[Properties, InputStream, OutputStream, Any, Any]
       }
     }
