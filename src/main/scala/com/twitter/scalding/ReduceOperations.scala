@@ -21,7 +21,7 @@ import cascading.tuple.{Tuple => CTuple, TupleEntry}
 import com.twitter.algebird.{
   Monoid,
   Ring,
-  AveragedValue,
+  Averager,
   Moments,
   SortedTakeListMonoid,
   HyperLogLogMonoid,
@@ -73,7 +73,7 @@ trait ReduceOperations[+Self <: ReduceOperations[Self]] extends java.io.Serializ
    * == Similar To ==
    * <a href="http://en.wikipedia.org/wiki/Algorithms_for_calculating_variance#Parallel_algorithm">http://en.wikipedia.org/wiki/Algorithms_for_calculating_variance#Parallel_algorithm</a>
    */
-  def average(f : (Fields, Fields)) = mapPlusMap(f) { (x : Double) => AveragedValue(1L, x) } { _.value }
+  def average(f : (Fields, Fields)) = aggregate(f)(Averager)
   def average(f : Symbol) : Self = average(f->f)
 
   /**
