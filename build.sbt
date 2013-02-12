@@ -20,6 +20,19 @@ resolvers ++= Seq(
 
 //resolvers += "Twitter Artifactory" at "http://artifactory.local.twitter.com/libs-releases-local"
 
+// Uncomment and adjust this to use the local Etsy filesystem repository
+//etsyFSRepoPath := Some("/Users/mwalker/development/Ivy/repository")
+
+// This optionally adds the Etsy filesystem resolver
+resolvers <<= (resolvers, etsyFSRepoPath) { (rs, p) =>
+  optionalEtsyResolver("etsy-fs-repo-resolver", p)
+    .map(rs :+ _)
+    .getOrElse(rs)
+}
+
+// This optionally points the publish target at the Etsy filesystem resolver
+publishTo <<= (etsyFSRepoPath) { p => optionalEtsyResolver("etsy-fs-repo-publish", p) }
+
 libraryDependencies += "cascading" % "cascading-core" % "2.0.2"
 
 libraryDependencies += "cascading" % "cascading-local" % "2.0.2"
